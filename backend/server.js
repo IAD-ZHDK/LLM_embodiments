@@ -176,8 +176,12 @@ async function main() {
     // 2. Initialize speech to text
     console.log('🎤 Initializing speech to text...');
 
-    currentInstances.speechToText = new SpeechToText(callBackSpeechToText, config.speechToTextModel);
-
+    if (config.muteMicrophone == true) {
+      console.log('🔇 Microphone muted in config, skipping speech to text initialization');
+      currentInstances.speechToText = null;
+    } else {
+      currentInstances.speechToText = new SpeechToText(callBackSpeechToText, config.speechToTextModel);
+    }
     // 3. Setup Express middleware
     console.log('📦 Setting up Express middleware...');
     currentInstances.app.use(cors());
@@ -265,9 +269,9 @@ async function main() {
           }
           console.log('Received command via WebSocket:', cmd);
 
-          if (cmd.command === 'pause') {
+          if (cmd.command === 'pause' && currentInstances.speechToText) {
             currentInstances.speechToText.pause();
-          } else if (cmd.command === 'resume') {
+          } else if (cmd.command === 'resume' && currentInstances.speechToText) {
             currentInstances.speechToText.resume();
             ws.send('Sent resume command to Python');
           } else if (cmd.command === 'setVolume') {
@@ -472,7 +476,9 @@ async function main() {
           data.value = "1"
           currentInstances.communicationMethod.write(data);
         }
-        currentInstances.speechToText.pause();
+        if (currentInstances.speechToText) {
+          currentInstances.speechToText.pause();
+        }
       } else if (msg.tts == "stopped" || msg.tts == "paused") {
         console.log("🏁 resuming speech to text");
         if (config.notifyTTS) {
@@ -480,7 +486,9 @@ async function main() {
           data.value = "0"
           currentInstances.communicationMethod.write(data);
         }
-        currentInstances.speechToText.resume();
+        if (currentInstances.speechToText) {
+          currentInstances.speechToText.resume();
+        }
       }
     }
 

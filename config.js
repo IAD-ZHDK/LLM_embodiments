@@ -4,7 +4,8 @@ const config = {
   //------ alternatively, you can set speechToTextModel to a string with the model name 
   // speechToTextModel: "vosk-model-small-de-0.15",
   //------ full list of TTS models can be found here:  https://alphacephei.com/vosk/models
-  // notifyTTS: true, // if enabled, send a notification to the Arduino in the format 
+  // notifyTTS: true, // if enabled, send a notification to the Arduino 
+  //muteMicrophone: true, // optional to turn of microphone input permanently
   volume: 50, // 0 to 100
   // OPENAI_API_KEY: 'your-api-key-here'
 
