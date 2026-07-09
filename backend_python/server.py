@@ -82,9 +82,102 @@ def _submit(coro: Any) -> Optional[Future]:
 def _clean_assistant_message(raw_message: str) -> str:
     message = raw_message or ""
     message = re.sub(r"<think>[\s\S]*?</think>", "", message, flags=re.IGNORECASE)
+    message = re.sub(r"^\s*assistant\s*\n+", "", message, flags=re.IGNORECASE)
     message = re.sub(r"^\s*(assistant|system)\s*:\s*", "", message, flags=re.IGNORECASE)
     message = re.sub(r"<\|im_start\|>|<\|im_end\|>|<\|assistant\|>", "", message)
     return message.strip()
+
+
+def _output_sanitizer_settings() -> Dict[str, Any]:
+    settings = state.config.get("llmSettings", {}) if isinstance(state.config, dict) else {}
+    sanitizer = settings.get("outputSanitizer", {}) if isinstance(settings, dict) else {}
+    return sanitizer if isinstance(sanitizer, dict) else {}
+
+
+def _configured_function_names() -> List[str]:
+    names: List[str] = []
+    if not state.function_handler:
+        return names
+    for fn in state.function_handler.get_all_functions():
+        name = str(fn.get("name", "")).strip()
+        if name:
+            names.append(name)
+    return sorted(set(names), key=len, reverse=True)
+
+
+def _parse_inline_argument(raw: str) -> Any:
+    token = raw.strip()
+    if not token:
+        return ""
+
+    lowered = token.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in ("null", "none"):
+        return ""
+
+    if re.fullmatch(r"-?\d+", token):
+        try:
+            return int(token)
+        except Exception:
+            pass
+    if re.fullmatch(r"-?\d+\.\d+", token):
+        try:
+            return float(token)
+        except Exception:
+            pass
+
+    if (token.startswith("{") and token.endswith("}")) or (token.startswith("[") and token.endswith("]")):
+        try:
+            return json.loads(token)
+        except Exception:
+            pass
+
+    if len(token) >= 2 and ((token[0] == '"' and token[-1] == '"') or (token[0] == "'" and token[-1] == "'")):
+        return token[1:-1]
+
+    return token
+
+
+def _strip_inline_pseudo_calls(message: str, pattern: re.Pattern[str]) -> str:
+    cleaned = pattern.sub("", message)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+async def _process_inline_pseudo_calls(message: str) -> str:
+    sanitizer = _output_sanitizer_settings()
+    strip_enabled = bool(sanitizer.get("stripPseudoToolCalls", True))
+    execute_enabled = bool(sanitizer.get("executeInlinePseudoCalls", False))
+
+    names = _configured_function_names()
+    if not names:
+        return message
+
+    name_pattern = "|".join(re.escape(name) for name in names)
+    call_pattern = re.compile(rf"(?i)(?<![A-Za-z0-9_])(?P<name>{name_pattern})\s*\(\s*(?P<args>[^()\n]{{0,180}})\s*\)")
+    matches = list(call_pattern.finditer(message))
+    if not matches:
+        return message
+
+    if execute_enabled and state.function_handler:
+        for match in matches:
+            fn_name = match.group("name")
+            raw_args = (match.group("args") or "").strip()
+            arg_value = _parse_inline_argument(raw_args)
+            payload = {} if raw_args == "" else {"value": arg_value}
+            try:
+                result = state.function_handler.handle_call(fn_name, payload)
+                await _handle_llm_response(result)
+            except Exception as exc:
+                await _update_frontend(f"Inline tool execution failed for {fn_name}: {exc}", "error")
+
+    if strip_enabled:
+        return _strip_inline_pseudo_calls(message, call_pattern)
+    return message
 
 
 async def _broadcast(payload: Dict[str, Any]) -> None:
@@ -126,6 +219,7 @@ async def _handle_llm_response(return_object: Dict[str, Any]) -> None:
 
     if role == "assistant":
         message = _clean_assistant_message(str(return_object.get("message", "")))
+        message = await _process_inline_pseudo_calls(message)
         if not message:
             return
         await _update_frontend(message, "assistant")
@@ -152,18 +246,11 @@ async def _handle_llm_response(return_object: Dict[str, Any]) -> None:
                 await _update_frontend(serial_value, "error")
             else:
                 await _update_frontend(f"Executed: {serial_value}", "system")
-                # Ask for a follow-up natural-language assistant response after successful tool execution.
-                follow_up = f"Action completed successfully: {serial_value}. Reply to the user in one short sentence."
-                nested = await _call_llm(follow_up, "system", "function-result")
-                if nested:
-                    await _handle_llm_response(nested)
+                # Do not call the LLM again here, otherwise function-capable models can recurse.
+                await _update_frontend("Done.", "assistant")
             return
 
         await _update_frontend(value, "system")
-        if state.llm_api:
-            nested = await _call_llm(value, "system", "function-result")
-            if nested:
-                await _handle_llm_response(nested)
         return
 
     if role in ("error", "system", "notification"):

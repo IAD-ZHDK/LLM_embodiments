@@ -30,8 +30,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "presence_penalty": 0.0,
         "max_tokens": 2048,
         "user_id": "1",
+        "toolPolicy": {
+            "enableIntentFilter": False,
+            "commandKeywords": [],
+        },
     },
-    "functions": {"actions": {}, "notifications": {}, "frontEnd": {}},
+    "functions": {"tools": {}},
     "conversationProtocol": [],
     "communicationMethod": "Serial",
     "volume": 50,

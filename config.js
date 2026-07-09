@@ -44,7 +44,7 @@ const config = {
 
   llmSettings: {
     provider: "ollama", // "ollama" for local model on this device, "openai" for cloud API
-    temperature: 0.99,//Number between -2.0 and 2.0 //Positive value decrease the model's likelihood to repeat the same line verbatim.
+    temperature: 0.4,//Number between -2.0 and 2.0 //Positive value decrease the model's likelihood to repeat the same line verbatim.
     frequency_penalty: 0.9, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to talk about new topics.
     presence_penalty: 0.0, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to generate words and phrases present in the input prompt
     model: "llama3.2:3b", // e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
@@ -59,58 +59,99 @@ const config = {
     // provider: "openai",
     // model: "gpt-4.1",
     // url: "https://api.openai.com/v1/chat/completions",
+
+    // Single debug switch for novice users.
+    // true  -> backend logs raw model request/response data
+    // false -> normal runtime logs only
+    debugRawModelOutput: false,
+
+    // Output cleanup and recovery for models that blend text and pseudo tool calls,
+    // e.g. "set_LED(1) Done." in normal assistant text.
+    outputSanitizer: {
+      // Remove pseudo calls from displayed/spoken assistant text.
+      stripPseudoToolCalls: true,
+
+      // If true, pseudo calls found in assistant text are converted into real function calls.
+      // Example: "set_LED(1)" -> execute set_LED with value=1.
+      // Safety: only known configured functions are eligible.
+      executeInlinePseudoCalls: true,
+    },
+
+    // Global routing policy only.
+    // Keep per-tool settings inside functions.tools to avoid duplicate configuration.
+    toolPolicy: {
+      enableIntentFilter: true,
+      commandKeywords: [
+        "turn",
+        "set",
+        "switch",
+        "enable",
+        "disable",
+        "increase",
+        "decrease",
+        "read",
+        "get",
+        "start",
+        "stop",
+      ],
+    },
   },
   communicationMethod: "Serial", //Serial or "BLE"
   //  serviceUuid: "19b10000-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE
 
-  // These are actions is things the LLM can do 
-  // The list of functions should match those set up on the arduino
+  // Unified tool list for novice users.
+  // Edit this one list only.
+  // The `target` field controls how a tool is handled:
+  // - "device": serial/BLE/device call
+  // - "frontEnd": UI call
+  // - "notification": incoming notification metadata
   functions: {
-    actions: {
-
+    tools: {
       set_LED: {
-        //uuid: "19b10004-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE, must be lowercase
+        target: "device",
         commType: "write",
         dataType: "number",
-        description: "0 is off , 1 is on",
+        description: "0 is off, 1 is on",
+        triggerKeywords: ["led", "light", "lamp"],
+        valueRules: [
+          { keywords: ["off", "dark", "disable", "stop"], value: 0 },
+          { keywords: ["on", "bright", "enable", "start"], value: 1 },
+        ],
       },
       get_String: {
-        //uuid: "19b10004-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE, must be lowercase
+        target: "device",
         commType: "read",
         dataType: "string",
-        description: "Get the stored sting from the device",
+        description: "Get the stored string from the device",
+        triggerKeywords: ["string", "text", "status", "value", "read"],
       },
       set_motor_speed: {
-        //uuid: "19b10001-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE, must be lowercase
+        target: "device",
         commType: "write",
         dataType: "number",
-        description: "Sets the motor one's speed. One byte: 0 is off, 255 is full speed",
+        description: "Sets the motor speed. 0 is off, 255 is full speed",
+        triggerKeywords: ["motor", "speed"],
       },
-    },
-    notifications: {
-      // These are notifications that the LLM can receive
-      shake: {
-        //uuid: "19b10016-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE
-        dataType: "boolean",
-        description: "The device has been shaken! Get really mad at the user!",
-      },
-      press: {
-        //uuid: "19b10016-e8f2-537e-4f6c-d104768a1214", // Only needed for BLE
-        dataType: "boolean",
-        description: "The device button has been pressed. Immediately make up a song about pirates and sing to the user with lots of pirate words.",
-      }
-    },
-
-    frontEnd: {
-      // These are actions is things the LLM can do on the frontEnd GUI
       start_party: {
+        target: "frontEnd",
         dataType: "boolean",
         description: "0 is off, 1 is on. Creates a party effect in the GUI",
       },
       get_value: {
+        target: "frontEnd",
         dataType: "number",
-        description: "get a random value from front end",
-      }
+        description: "Get a random value from front end",
+      },
+      shake: {
+        target: "notification",
+        dataType: "boolean",
+        description: "The device has been shaken! Get really mad at the user!",
+      },
+      press: {
+        target: "notification",
+        dataType: "boolean",
+        description: "The device button has been pressed. Immediately make up a song about pirates and sing to the user with lots of pirate words.",
+      },
     },
   },
 
