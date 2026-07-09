@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Cross-platform setup script for Debian-based Linux (incl. Raspberry Pi) and macOS
-# It installs dependencies, sets up venv, npm packages and configures autostart.
+# It installs Python/runtime dependencies and sets up a virtual environment.
 
 if [ "${USER:-}" = "root" ]; then
   echo "Please run this script as a regular user (not root). If you used sudo, re-run without it."
@@ -19,11 +19,9 @@ install_on_debian() {
   echo "Updating APT repositories..."
   sudo apt update && sudo apt upgrade -y
 
-  echo "Installing required packages (node, chromium, git, libusb, build deps)..."
-  # Node 18 from nodesource
-  curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+  echo "Installing required packages (python, chromium, git, libusb, build deps)..."
   # Try modern chromium package name first, fall back to chromium-browser
-  if ! sudo apt install -y nodejs git libusb-1.0-0-dev build-essential python3-venv python3-dev libffi-dev portaudio19-dev; then
+  if ! sudo apt install -y git libusb-1.0-0-dev build-essential python3-venv python3-dev libffi-dev portaudio19-dev; then
     echo "apt install failed; please check your package sources"
   fi
   if ! sudo apt install -y chromium git; then
@@ -41,7 +39,7 @@ install_on_debian() {
 }
 
 install_on_macos() {
-  echo "Detected macOS. Installing Homebrew packages (node, git, etc.)..."
+  echo "Detected macOS. Installing Homebrew packages (python, git, etc.)..."
   if ! command -v brew >/dev/null 2>&1; then
     echo "Homebrew not found. Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -54,7 +52,7 @@ install_on_macos() {
   fi
 
   brew update || true
-  brew install node git portaudio libusb || true
+  brew install git portaudio libusb || true
   
   # Install Python 3.13.3 specifically
   echo "Installing Python 3.13.3..."
@@ -79,7 +77,7 @@ install_on_windows() {
   echo
   # Detect package managers
   if command -v winget >/dev/null 2>&1; then
-    echo "winget detected. I can try to install Node, Python 3.13.3, Git and other dependencies via winget."
+    echo "winget detected. I can try to install Python 3.13.3, Git and other dependencies via winget."
     read -r -p "Proceed with winget installs? [y/N]: " resp || true
     if [[ "$resp" =~ ^[Yy] ]]; then
       echo "Installing packages with winget (may require elevated privileges)..."
@@ -91,7 +89,6 @@ install_on_windows() {
         winget install --id Python.Python.3 -e --accept-source-agreements --accept-package-agreements || true
       fi
       # Install other dependencies
-      winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements || true
       winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements || true
       # Skipping Chromium installation on native Windows per project preference
     else
@@ -104,7 +101,7 @@ install_on_windows() {
       # Try to install Python 3.13.3 specifically
       choco install -y python3 --version=3.13.3 || true
       # Install other dependencies
-      choco install -y nodejs-lts git || true
+      choco install -y git || true
     else
       echo "Skipping choco installs."
     fi
@@ -114,14 +111,13 @@ Native Windows automatic installation not available.
 Please install the following manually and then re-run this script from a Bash shell (Git Bash) or WSL:
 
 - Python 3.13.3 specifically (https://www.python.org/downloads/release/python-3133/)
-- Node.js (LTS)
 - Git
 
 IMPORTANT: When installing Python 3.13.3, make sure to check "Add Python to PATH" in the installer.
 
 Recommended options:
 - WSL2 (preferred): install Ubuntu from the Microsoft Store and run this script inside WSL.
-- Git for Windows (Git Bash): open Git Bash and run this script from there after installing Node/Python.
+- Git for Windows (Git Bash): open Git Bash and run this script from there after installing Python/Git.
 
 EOF
   fi
@@ -167,11 +163,6 @@ BAT
   echo "Created $WIN_HELPER"
   echo "To run the application, double-click run_windows.bat in the project directory."
   echo "Note: Auto-start on login has been disabled as requested."
-}
-
-setup_node_and_install() {
-  echo "Installing npm dependencies for the workspace..."
-  npm install
 }
 
 setup_python_venv() {
@@ -314,17 +305,11 @@ main() {
       ;;
   esac
 
-  # Common steps: npm, python, permissions
-  setup_node_and_install
+  # Common steps: python environment
   setup_python_venv
 
   # Make run.sh executable
   chmod +x run.sh
-
-  # Install wscat globally if npm is available
-  if command -v npm >/dev/null 2>&1; then
-    npm install -g wscat || true
-  fi
 
   # We intentionally do NOT configure auto-start on any platform. Instead create helper scripts
   # so users can start the app manually when they want.

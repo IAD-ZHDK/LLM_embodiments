@@ -2,7 +2,7 @@
   "name": "headless-raspberry-pi-project",
   "version": "1.0.0",
   "type": "module",
-  "description": "A headless Raspberry Pi project with a web app kiosk front end and a Node.js backend.",
+  "description": "Legacy Node.js backend for compatibility. Active backend is Python-based.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

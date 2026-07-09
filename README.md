@@ -151,31 +151,26 @@ Use model names directly (no numeric indexing).
 ## Manual Setup
 
 ### 1. **Install Dependencies**
-- Update the system and install Node.js, npm, and Chromium:
+- Update the system and install Python, Chromium, and system libraries:
   ```bash
   sudo apt update && sudo apt upgrade -y
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
   # For Raspberry Pi OS Bookworm (newer)
-  sudo apt install -y nodejs chromium git
+  sudo apt install -y chromium git
   # For Raspberry Pi OS Bullseye and earlier
-  sudo apt install -y nodejs chromium-browser git
+  sudo apt install -y chromium-browser git
   sudo apt-get install libusb-1.0-0-dev
   sudo apt install portaudio19-dev
   sudo apt install fswebcam
   ```
 
 On macOS:
-  brew install nodejs
-  brew install libusb
-  ```
 
-### 2. **Install Project Dependencies**
 ```bash
-cd LLM_Embodiements
-npm install
+brew install git
+brew install libusb
 ```
 
-### 3. Create and activate a Python virtual environment and install packages
+### 2. Create and activate a Python virtual environment and install packages
 
 This project requires Python 3.13.3 (please do not use a newer Python version, until onyxruntime is supported). The instructions below assume the Python 3.13 executable is available as `python3.13`.
 
@@ -221,7 +216,7 @@ After installation verify the binary:
 python3.13 --version
 # expected: Python 3.13.3
 ```
-### 4. setup .env file (only for OpenAI provider)
+### 3. setup .env file (only for OpenAI provider)
 
 ```bash
 nano .env
@@ -231,39 +226,48 @@ and replace the API Key with your own.
 OPENAI_API_KEY='******************************' 
   ```
 
-### 5. **Start the Application**
+### 4. **Start the Application**
 
 - Make sure python virtual environment is started:
 
 ```bash
   source python/venv/bin/activate
 ```
-- To start both backend and frontend together:
+- Start backend (serves UI and API on port 3000):
 ```bash
-  npm start
-```
-or for development:
-
-```bash
-  npm run dev
+  ./run_backend_python.sh
 ```
 
-- The backend will run on port 3000, and the frontend on port 5173.
+- The backend and UI are served on port 3000.
 
-### 6. **Set Up Kiosk Mode and autostart**
+### Python Backend
+
+Run backend directly:
+
+```bash
+./run_backend_python.sh
+```
+
+Notes:
+- `run_backend_python.sh` activates `python/venv` when present.
+- It also clears port 3000 before startup to prevent `address already in use` errors.
+- This path does not require Node.js tooling.
+
+Current Python backend scope:
+- Local/Web API LLM calls (Ollama/OpenAI) using `llmSettings`
+- STT/TTS worker orchestration via existing Python scripts
+- Serial communication with the same function-call flow
+- Frontend websocket protocol compatibility
+
+### 5. **Set Up Kiosk Mode and autostart**
 
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
 
+### Debugging with terminal 
 
-### Debuging with terminal 
-
-- Install wscat for terminal websocket connections
-```bash
-  npm install -g wscat
-```
 - Open a websocket connection
 ```bash
   wscat -c ws://localhost:3000

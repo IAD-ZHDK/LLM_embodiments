@@ -7,3 +7,6 @@ pyusb
 requests
 onnxruntime 
 webrtcvad
+fastapi
+uvicorn
+pyserial

@@ -111,10 +111,6 @@ check_for_updates() {
         if git pull origin main; then
             log "✅ Updated successfully"
             
-            # Install any new dependencies
-            log "Checking for new dependencies..."
-            npm install
-            
             # Update python packages if requirements.txt changed
             if git diff HEAD@{1} HEAD --name-only | grep -q "requirements.txt"; then
                 log "📦 Python requirements changed, updating packages..."
@@ -167,27 +163,16 @@ cleanup() {
     wait "$WATCHER_PID" 2>/dev/null || true
   fi
 
-  # Kill any process using port 3000 or 5173
-  log "Killing processes on ports 3000 and 5173..."
+  # Kill any process using port 3000
+  log "Killing processes on port 3000..."
   lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
-  lsof -ti tcp:5173 | xargs kill -9 2>/dev/null || true
   sleep 1
 
- # Kill backend/frontend (npm) and python scripts
-  if [[ -n "$NPM_BACK_PID" ]]; then
-    log "Killing npm backend (pid: $NPM_BACK_PID)..."
-    kill "$NPM_BACK_PID" 2>/dev/null || true
-    wait "$NPM_BACK_PID" 2>/dev/null || true
-  fi
-  if [[ -n "$NPM_FRONT_PID" ]]; then
-    log "Killing npm frontend (pid: $NPM_FRONT_PID)..."
-    kill "$NPM_FRONT_PID" 2>/dev/null || true
-    wait "$NPM_FRONT_PID" 2>/dev/null || true
-  fi
-  if [[ -n "$PY_PID" ]]; then
-    log "Killing python (pid: $PY_PID)..."
-    kill "$PY_PID" 2>/dev/null || true
-    wait "$PY_PID" 2>/dev/null || true
+ # Kill backend process
+  if [[ -n "${BACKEND_PID:-}" ]]; then
+    log "Killing backend (pid: $BACKEND_PID)..."
+    kill "$BACKEND_PID" 2>/dev/null || true
+    wait "$BACKEND_PID" 2>/dev/null || true
   fi
 
   # Try to kill Chromium by PID
@@ -207,7 +192,6 @@ cleanup() {
 
   # Final attempt: free ports again
   lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
-  lsof -ti tcp:5173 | xargs kill -9 2>/dev/null || true
 
   # Restore desktop pop-up and automount preferences if we changed them
   restore_desktop_popups
@@ -222,8 +206,8 @@ trap 'cleanup' SIGINT SIGTERM SIGUSR1
 # Run cleanup at the start to clear old processes
 cleanup
 
-if lsof -ti tcp:3000 >/dev/null || lsof -ti tcp:5173 >/dev/null; then
-  log "Ports 3000 or 5173 are still in use. Exiting..."
+if lsof -ti tcp:3000 >/dev/null; then
+  log "Port 3000 is still in use. Exiting..."
   exit 1
 fi
 
@@ -301,32 +285,25 @@ watch_for_usb() {
 
 # Main runtime function: starts services and kiosk browser
 run_once() {
-   # Start backend and frontend servers in the background (explicit scripts so we track both)
-  log "Starting backend server..."
-  npm run start:backend &
-  NPM_BACK_PID=$!
-  log "Starting frontend server..."
-  npm run start:frontend &
-  NPM_FRONT_PID=$!
-
-  # Start your Python script(s) in the background (example)
-  python python/scriptTTS.py &
-  PY_PID=$!
+  # Start Python backend server in the background
+  log "Starting Python backend server..."
+  ./run_backend_python.sh &
+  BACKEND_PID=$!
 
   # Start USB watcher in background (gives it main PID so it can signal termination)
   watch_for_usb "$$" &
   WATCHER_PID=$!
 
-  # Wait for the frontend server to be ready
-  log "Waiting for frontend server to be ready on http://localhost:5173 ..."
-  until curl -s http://localhost:5173 > /dev/null; do
+  # Wait for the backend server to be ready
+  log "Waiting for backend server to be ready on http://localhost:3000 ..."
+  until curl -s http://localhost:3000 > /dev/null; do
     sleep 2
   done
 
   # Launch Chromium in kiosk mode on the attached display
   if [[ "$OSTYPE" == "darwin"* ]]; then
     log "Launching default browser on macOS..."
-    open http://localhost:5173 &
+    open http://localhost:3000 &
   else
     export DISPLAY=:0
     log "Launching Chromium in kiosk mode..."
@@ -347,10 +324,10 @@ EOL
     
     sleep 5  # Extra wait for desktop to finish loading
     if command -v chromium >/dev/null 2>&1; then
-      chromium $CHROMIUM_FLAGS http://localhost:5173 &
+      chromium $CHROMIUM_FLAGS http://localhost:3000 &
       CHROMIUM_PID=$!
     elif command -v chromium-browser >/dev/null 2>&1; then
-      chromium-browser $CHROMIUM_FLAGS http://localhost:5173 &
+      chromium-browser $CHROMIUM_FLAGS http://localhost:3000 &
       CHROMIUM_PID=$!
     else
       log "Chromium browser not found! Please install it with 'sudo apt install chromium' or 'sudo apt install chromium-browser'"

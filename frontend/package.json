@@ -1,7 +1,7 @@
 {
   "name": "11_sentientsenses",
   "version": "1.0.0",
-  "description": "An art project running application on a headless Raspberry Pi, utilizing a Node.js backend and a p5.js frontend. The application will serve as a kiosk interface, providing an interactive experience through a web browser.",
+  "description": "Frontend for the LLM embodiments kiosk project, served by the Python backend.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
