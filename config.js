@@ -1,3 +1,6 @@
+// Deprecated runtime config file.
+// The Python backend now reads config.toml as the single source of truth.
+// Keep this file only for reference while migrating older workflows.
 const config = {
   // Active language profile used for both STT and TTS.
   activeLanguage: "en", // "en" or "de"

@@ -89,14 +89,13 @@ ollama pull qwen2.5:3b
 ollama pull hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M
 ```
 
-Set the model in `llmSettings.model` in [config.js](config.js), for example:
+Set the model in `llmSettings.model` in [config.toml](config.toml), for example:
 
-```js
-llmSettings: {
-  provider: "ollama",
-  model: "hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M",
-  url: "http://127.0.0.1:11434/api/chat",
-}
+```toml
+[llmSettings]
+provider = "ollama"
+model = "hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M"
+url = "http://127.0.0.1:11434/api/chat"
 ```
 
 Tool-calling compatibility note:
@@ -118,7 +117,7 @@ unzip vosk-model-small-en-us-0.15.zip
 rm vosk-model-small-en-us-0.15.zip
 ```
 
-Set the STT model name in [config.js](config.js) under the active language profile (folder name, not a number).
+Set the STT model name in [config.toml](config.toml) under the active language profile (folder name, not a number).
 
 #### 3) Install TTS models (Piper)
 
@@ -131,30 +130,43 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/lo
 wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
 ```
 
-Set the TTS model file name in [config.js](config.js) under the active language profile.
+Set the TTS model file name in [config.toml](config.toml) under the active language profile.
 
 #### 4) Select language profile
 
-To switch language for STT and TTS together, change `activeLanguage` in [config.js](config.js) and restart:
+To switch language for STT and TTS together, change `activeLanguage` in [config.toml](config.toml) and restart:
 
-```js
-activeLanguage: "en", // or "de"
-speech: {
-  sttBackend: "vosk",
-  languageProfiles: {
-    en: {
-      speechToTextModel: "vosk-model-small-en-us-0.15",
-      textToSpeechModel: "en_GB-alan-low.onnx",
-    },
-    de: {
-      speechToTextModel: "vosk-model-small-de-0.15",
-      textToSpeechModel: "de_DE-thorsten-medium.onnx",
-    },
-  },
-}
+```toml
+activeLanguage = "en"  # or "de"
+
+[speech]
+sttBackend = "vosk"
+
+[speech.languageProfiles.en]
+speechToTextModel = "vosk-model-small-en-us-0.15"
+textToSpeechModel = "en_GB-alan-low.onnx"
+
+[speech.languageProfiles.de]
+speechToTextModel = "vosk-model-small-de-0.15"
+textToSpeechModel = "de_DE-thorsten-medium.onnx"
 ```
 
 Use model names directly (no numeric indexing).
+
+## Raspberry PI hallo Setup
+
+update the pi and reboot:
+```bash
+sudo apt update && sudo apt full-upgrade -y-y
+sudo rpi-eeprom-update -a
+sudo reboot
+```
+install hailo_
+```bash
+wget https://dev-public.hailo.ai/2025_12/Hailo10/hailo_gen_ai_model_zoo_5.1.1_arm64.deb
+sudo dpkg -i hailo_gen_ai_model_zoo_5.1.1_arm64.deb
+sudo reboot
+```
 
 ## Manual Setup
 
@@ -259,7 +271,6 @@ Run backend directly:
 Notes:
 - `run_backend_python.sh` activates `python/venv` when present.
 - It also clears port 3000 before startup to prevent `address already in use` errors.
-- This path does not require Node.js tooling.
 
 Current Python backend scope:
 - Local/Web API LLM calls (Ollama/OpenAI) using `llmSettings`
@@ -316,3 +327,5 @@ Add  /.config/autostart/llm-embodiments.desktop with the following content:
 - Recent changes to LLM API for images: fix needed
 - add physical button to restart whole application 
 - BLE integration 
+
+

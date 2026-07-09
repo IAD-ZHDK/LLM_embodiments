@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any, Dict
 
@@ -51,25 +50,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
-def _node_import_config(config_path: Path, cwd: Path) -> Dict[str, Any]:
-    script = """
-import { pathToFileURL } from 'url';
-const target = process.argv[1];
-const mod = await import(pathToFileURL(target).href + '?t=' + Date.now());
-console.log(JSON.stringify(mod.config || mod.default || {}));
-""".strip()
-
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", script, str(config_path)],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    output = result.stdout.strip().splitlines()
-    if not output:
-        raise RuntimeError("No config output from Node import")
-    return json.loads(output[-1])
+def _toml_load_config(config_path: Path) -> Dict[str, Any]:
+    # tomllib is read-only by design and lives in the Python 3.11+ stdlib;
+    # the project venv is 3.13.3 so no extra dependency is needed.
+    with config_path.open("rb") as f:
+        return tomllib.load(f)
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -83,13 +68,20 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 
 
 def load_config(repo_root: Path) -> Dict[str, Any]:
-    config_path = repo_root / "config.js"
+    config_path = repo_root / "config.toml"
     if not config_path.exists():
         return DEFAULT_CONFIG
 
     try:
-        loaded = _node_import_config(config_path, repo_root)
-        return _deep_merge(DEFAULT_CONFIG, loaded)
-    except Exception as exc:
-        print(f"⚠️ Failed to load config.js via Node import: {exc}")
-        return DEFAULT_CONFIG
+        loaded = _toml_load_config(config_path)
+    except tomllib.TOMLDecodeError as exc:
+        # Refuse to silently fall back to DEFAULT_CONFIG — a bad config means
+        # the user's tools, language profiles, persona, and AI HAT+ settings
+        # would all be ignored at runtime, which is much harder to debug than
+        # a startup crash with the parser's line/column in the traceback.
+        raise RuntimeError(
+            f"Failed to parse {config_path} as TOML. Fix the file and restart "
+            f"the backend. Parser error: {exc}"
+        ) from exc
+
+    return _deep_merge(DEFAULT_CONFIG, loaded)

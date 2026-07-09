@@ -230,7 +230,7 @@ else
   log "Unknown OS type: $OSTYPE - skipping WiFi setup."
 fi
 
-# Watcher: looks for new USB mounts that contain a config.js and triggers a restart.
+# Watcher: looks for new USB mounts that contain a config.toml and triggers a restart.
 # It will kill the main PID, wait for it to exit, then exec a fresh instance of this script.
 watch_for_usb() {
   log "Starting USB watcher..."
@@ -277,7 +277,7 @@ watch_for_usb() {
           fi
           # continue watching; do not exit so we can detect additional events
         fi
-      done < <(find "$base" -maxdepth 3 -type f -name 'config.js' -print0 2>/dev/null)
+      done < <(find "$base" -maxdepth 3 -type f -name 'config.toml' -print0 2>/dev/null)
     done
     sleep 3
   done
