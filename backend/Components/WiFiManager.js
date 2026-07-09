@@ -32,7 +32,7 @@ class WiFiManager {
 
     // --- secret store helpers ---
     _secretsFilePath() {
-        return path.join(os.homedir(), '.config', 'chatgpt_arduino', 'wifi_secrets.json');
+        return path.join(os.homedir(), '.config', 'llm_embodiments', 'wifi_secrets.json');
     }
 
     _ensureSecretsDir() {

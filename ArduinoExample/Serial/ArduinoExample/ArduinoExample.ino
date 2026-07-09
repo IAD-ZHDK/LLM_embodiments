@@ -10,7 +10,7 @@
 SoftwareSerial myServoSerial(rxPin, txPin); // Create the new software serial instance
 #define LSS_ID 254                          // ID 254 to broadcast to every motor on bus
 
-#include "SerialChatGPT.h"
+#include "SerialLLM.h"
 
 // Variables
 bool ledState = false;

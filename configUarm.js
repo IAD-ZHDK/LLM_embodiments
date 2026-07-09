@@ -1,6 +1,19 @@
 const config = {
-  textToSpeechModel: 1, // 0: en_GB-cori-high, 1:en_GB-alan-medium, 2:en_US-lessac-medium, 3: de_DE-thorsten-medium. Changing this value may cause an initial delay as the model is downloaded.
-  speechToTextModel: 0, // 0: small english, 1: medium english, 2: small german. Changing this value may cause an initial delay as the model is downloaded.
+  activeLanguage: "en", // "en" or "de"
+
+  speech: {
+    sttBackend: "vosk", // "vosk" | "whisper"
+    languageProfiles: {
+      en: {
+        speechToTextModel: "vosk-model-small-en-us-0.15",
+        textToSpeechModel: "en_GB-alan-medium.onnx",
+      },
+      de: {
+        speechToTextModel: "vosk-model-small-de-0.15",
+        textToSpeechModel: "de_DE-thorsten-medium.onnx",
+      },
+    },
+  },
 
   // WiFi Configuration (optional)
   // The system will auto-detect the network type based on your credentials:
@@ -23,7 +36,7 @@ const config = {
   //   ssid: "YourOpenNetwork"
   // },
 
-  chatGPTSettings: {
+  llmSettings: {
     temperature: 0.99,//Number between -2.0 and 2.0 //Positive value decrease the model's likelihood to repeat the same line verbatim.
     frequency_penalty: 0.9, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to talk about new topics.
     presence_penalty: 0.0, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to generate words and phrases present in the input prompt
@@ -73,7 +86,7 @@ const config = {
         dataType: "string",
         description: "Stop the robots suction compressor with the command'M2231 V0'",
       },
-       dance: {
+      dance: {
         commType: "writeRaw",
         dataType: "string",
         description: "move the robot back and forth with a little randomness thrown in via a series of commands, followed by a carriage return. for example'G2201 S215 R0 H100 F10000\\n G2201 S115 R140 H100 F10000\\n G2201 S215 R140 H100 F10000\\n G2201 S180 R10 H100 F10000\\n'",
@@ -105,34 +118,34 @@ const config = {
     },
 
     // we can also add in history of older conversations here, or construct new ones.
-   
-    {
-        "role": "assistant",
-        "content": "Fuck off, im not interested in you. Go away!"
-    },
-    {
-        "role": "user",
-        "content": "turn on the led"
-    }
 
-     /*
     {
-        "role": "assistant",
-        "content": "To turn on the led, you must answer my riddles. I am taken from a mine, and shut up in a wooden case, from which I am never released, and yet I am used by almost every person. What am I?"
+      "role": "assistant",
+      "content": "Fuck off, im not interested in you. Go away!"
     },
     {
-        "role": "user",
-        "content": 'A monkey'
+      "role": "user",
+      "content": "turn on the led"
     },
-    {
-        "role": "assistant",
-        "content": "No, a Pencil you fool. I will not turn the LED on unless you answer one of my riddles."
-    },
-    {
-        "role": "user",
-        "content": 'This is someone else now, I haven`t heard any riddles yet'
-    },
-     */
+
+    /*
+   {
+       "role": "assistant",
+       "content": "To turn on the led, you must answer my riddles. I am taken from a mine, and shut up in a wooden case, from which I am never released, and yet I am used by almost every person. What am I?"
+   },
+   {
+       "role": "user",
+       "content": 'A monkey'
+   },
+   {
+       "role": "assistant",
+       "content": "No, a Pencil you fool. I will not turn the LED on unless you answer one of my riddles."
+   },
+   {
+       "role": "user",
+       "content": 'This is someone else now, I haven`t heard any riddles yet'
+   },
+    */
   ],
 };
 export { config };

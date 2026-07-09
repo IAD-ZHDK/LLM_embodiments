@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# filepath: /Users/lfranzke/Documents/ZHdK/11_Physical Computing Lab/Technology/ChatGPT_arduinoV2/python/speechToText.py
+# filepath: /Users/lfranzke/Documents/ZHdK/11_Physical Computing Lab/Technology/LLM_embodiments/python/scriptSTT.py
 
 import os
 import sys
@@ -40,6 +40,7 @@ MODEL_DEFAULT = "vosk-model-small-en-us-0.15"  # Default model https://alphaceph
 MODEL_EN_LARGE = "vosk-model-en-us-0.22-lgraph"       # Large English model
 MODEL_DE_SMALL = "vosk-model-small-de-0.15"    # German model
 current_model = 0  # Default model index
+stt_backend = "vosk"
 # Global variables for communication
 _recognizer = None
 _recognizer_ready = threading.Event()
@@ -344,6 +345,8 @@ def stdin_listener():
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Speech to Text Service')
+    parser.add_argument('--backend', default='vosk', choices=['vosk', 'whisper'],
+                       help='STT backend to use')
     parser.add_argument('--model', default=0,
                        help='Initial STT model to use (int: 0-3 for presets, or string: model name)')
     # Convert to int if it's a digit string, otherwise keep as string
@@ -358,8 +361,14 @@ def parse_arguments():
 def main():
     try:
         global current_model
+        global stt_backend
         args = parse_arguments()
+        stt_backend = args.backend
         current_model = args.model
+        if stt_backend == 'whisper':
+            print("⚠️ Whisper backend is not implemented yet in this script. Falling back to Vosk.", file=sys.stderr)
+            stt_backend = 'vosk'
+
         print("\n🎤 Current STT Model:", current_model, file=sys.stderr)
         
         # Check if VOSK is available before starting

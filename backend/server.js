@@ -5,7 +5,7 @@ import cors from 'cors';
 import http from 'http';
 import dns from 'dns';
 import { WebSocketServer, WebSocket } from 'ws';
-import ChatGPTAPI from './Components/ChatGPTAPI.js';
+import LLMAPI from './Components/LLMAPI.js';
 // import config json file
 import { loadConfig, loadFromUSB, getUSBDetector } from './Components/configHandler.js';
 import SerialCommunication from './Components/SerialCommunication.js';
@@ -41,11 +41,34 @@ let existingConfig = null; // this is used for comparison on usb config change
 
 const PORT = process.env.PORT || 3000;
 
+function getActiveSpeechSettings(appConfig) {
+  const legacyFallback = {
+    speechToTextModel: appConfig.speechToTextModel || 'vosk-model-small-en-us-0.15',
+    textToSpeechModel: appConfig.textToSpeechModel || 'en_GB-alan-low.onnx',
+  };
+
+  if (!appConfig.speech || !appConfig.speech.languageProfiles) {
+    return {
+      sttBackend: 'vosk',
+      ...legacyFallback,
+    };
+  }
+
+  const activeLanguage = appConfig.activeLanguage || 'en';
+  const languageProfile = appConfig.speech.languageProfiles[activeLanguage] || appConfig.speech.languageProfiles.en;
+
+  return {
+    sttBackend: appConfig.speech.sttBackend || 'vosk',
+    speechToTextModel: languageProfile?.speechToTextModel || legacyFallback.speechToTextModel,
+    textToSpeechModel: languageProfile?.textToSpeechModel || legacyFallback.textToSpeechModel,
+  };
+}
+
 async function main() {
   if (isRestarting) return; // Don't start if we're in the middle of restarting
 
   try {
-    console.log('🚀 Starting ChatGPT Arduino application...');
+    console.log('🚀 Starting LLM Arduino application...');
 
     // Clear any existing instances
     if (currentInstances.server || currentInstances.wss) {
@@ -110,7 +133,11 @@ async function main() {
       console.error('❌ Error while attempting WiFi connection:', err.message || err);
     }
 
-    testNetworkPerformance()
+    testNetworkPerformance(config.llmSettings)
+
+    const speechSettings = getActiveSpeechSettings(config);
+    console.log('speech settings:', speechSettings);
+
     // set volume from config
     console.log("setting tts volume to config value:", config.volume);
     ttsvolume = config.volume || 50;
@@ -132,9 +159,9 @@ async function main() {
     const functionHandler = new FunctionHandler(config, currentInstances.communicationMethod);
 
     // Setup LLM API
-    console.log("model config:", config.chatGPTSettings.model);
+    console.log("model config:", config.llmSettings.model);
 
-    let LLM_API = new ChatGPTAPI(config, functionHandler);
+    let LLM_API = new LLMAPI(config, functionHandler);
 
 
     // Define callback functions first
@@ -180,7 +207,11 @@ async function main() {
       console.log('🔇 Microphone muted in config, skipping speech to text initialization');
       currentInstances.speechToText = null;
     } else {
-      currentInstances.speechToText = new SpeechToText(callBackSpeechToText, config.speechToTextModel);
+      currentInstances.speechToText = new SpeechToText(
+        callBackSpeechToText,
+        speechSettings.speechToTextModel,
+        speechSettings.sttBackend
+      );
     }
     // 3. Setup Express middleware
     console.log('📦 Setting up Express middleware...');
@@ -401,17 +432,177 @@ async function main() {
     })
     */
 
+    function cleanAssistantMessage(rawMessage) {
+      if (typeof rawMessage !== 'string') {
+        return rawMessage;
+      }
+
+      let cleaned = rawMessage.trim();
+
+      // Remove model reasoning blocks if present (DeepSeek-style tags).
+      cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+      // Remove chat template markers seen in some local model outputs.
+      cleaned = cleaned
+        .replace(/<\|im_start\|>assistant\s*/gi, '')
+        .replace(/<\|im_end\|>/gi, '')
+        .replace(/<\|assistant\|>\s*/gi, '')
+        .replace(/<\|user\|>\s*/gi, '')
+        .trim();
+
+      // Some local models prepend role labels; strip repeated prefixes.
+      while (/^assistant\b[:\s\n]*/i.test(cleaned)) {
+        cleaned = cleaned.replace(/^assistant\b[:\s\n]*/i, '').trim();
+      }
+
+      // Remove standalone pseudo tool-call lines such as: (set_LED) # ...
+      cleaned = cleaned
+        .split('\n')
+        .filter(line => !/^\s*\([a-zA-Z_][a-zA-Z0-9_]*\)\s*(#.*)?\s*$/i.test(line))
+        .join('\n')
+        .trim();
+
+      // Unwrap a fully quoted string response.
+      if ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+        (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+        cleaned = cleaned.slice(1, -1).trim();
+      }
+
+      return cleaned;
+    }
+
+    function tryParseFunctionReturnValue(value) {
+      if (typeof value !== 'string') return null;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    }
+
+    function parseAssistantFallbackToolCommand(message, availableFunctionNames) {
+      if (typeof message !== 'string') return null;
+
+      const trimmed = message.trim();
+      if (!trimmed || trimmed.includes('\n')) return null;
+
+      let name = null;
+      let rawArgs = null;
+
+      // Supports: set_LED(0)
+      let match = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)$/);
+      if (match) {
+        name = match[1];
+        rawArgs = (match[2] || '').trim();
+      } else {
+        // Supports: set_LED 0
+        match = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$/);
+        if (match) {
+          name = match[1];
+          rawArgs = (match[2] || '').trim();
+        }
+      }
+
+      if (!name || !availableFunctionNames.has(name)) return null;
+
+      // Optional JSON object payload: set_LED {"value":0}
+      if (rawArgs && rawArgs.startsWith('{') && rawArgs.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(rawArgs);
+          if (parsed && typeof parsed === 'object') {
+            return { name, args: parsed };
+          }
+        } catch {
+          // Fall through to scalar parsing.
+        }
+      }
+
+      let value = rawArgs;
+      if (/^(true|false)$/i.test(rawArgs)) {
+        value = rawArgs.toLowerCase() === 'true';
+      } else if (/^-?\d+(\.\d+)?$/.test(rawArgs)) {
+        value = Number(rawArgs);
+      } else if (
+        (rawArgs.startsWith('"') && rawArgs.endsWith('"')) ||
+        (rawArgs.startsWith("'") && rawArgs.endsWith("'"))
+      ) {
+        value = rawArgs.slice(1, -1);
+      }
+
+      return { name, args: { value } };
+    }
+
+    function tryExecuteAssistantFallbackToolCommand(message) {
+      const availableFunctionNames = new Set(
+        functionHandler.getAllFunctions().map((fn) => fn.name)
+      );
+
+      const parsedCommand = parseAssistantFallbackToolCommand(message, availableFunctionNames);
+      if (!parsedCommand) return false;
+
+      console.log('Executing assistant fallback tool command:', parsedCommand);
+
+      const syntheticMessage = {
+        function_call: {
+          name: parsedCommand.name,
+          arguments: JSON.stringify(parsedCommand.args),
+        },
+      };
+
+      const returnObject = {
+        message: null,
+        promise: null,
+        role: 'assistant',
+      };
+
+      functionHandler.handleCall(syntheticMessage, returnObject)
+        .then((response) => {
+          LLMresponseHandler(response);
+        })
+        .catch((error) => {
+          console.error('Fallback tool command execution failed:', error);
+          updateFrontend(`Error executing assistant command: ${error.message}`, 'error');
+        });
+
+      return true;
+    }
+
     function LLMresponseHandler(returnObject) {
       console.log("LLM response handler called with returnObject:", returnObject);
       // TODO: add error handling
       // console.log(returnObject);
       if (returnObject.role == "assistant") {
         // convert the returnObject.message to string to avoid the class having access to the returnObject
-        let message = returnObject.message.toString();
+        let message = cleanAssistantMessage(returnObject.message.toString());
+
+        // Ignore/sanitize assistant echoes of low-level serial ack payloads.
+        const assistantPayload = tryParseFunctionReturnValue(message);
+        const assistantSerialWrite = assistantPayload && typeof assistantPayload["Writing to Serial"] === 'string'
+          ? assistantPayload["Writing to Serial"]
+          : null;
+        if (assistantSerialWrite) {
+          if (assistantSerialWrite.startsWith('Error:')) {
+            updateFrontend(assistantSerialWrite, 'error');
+          } else {
+            updateFrontend(`Executed: ${assistantSerialWrite}`, 'system');
+          }
+          return;
+        }
+
+        // Fallback for models that emit plain-text tool command lines instead of JSON tool calls.
+        if (tryExecuteAssistantFallbackToolCommand(message)) {
+          return;
+        }
+
+        if (!message) {
+          console.log("Empty assistant message after normalization; skipping frontend/TTS update.");
+          return;
+        }
+
         try {
           updateFrontend(message, "assistant");
           console.log("Text to speech volume: " + ttsvolume);
-          textToSpeech.say(message, config.textToSpeechModel, ttsvolume);
+          textToSpeech.say(message, speechSettings.textToSpeechModel, ttsvolume);
         } catch (error) {
           console.log(error);
           updateFrontend(error, "error");
@@ -424,10 +615,29 @@ async function main() {
         updateFrontend(functionName, "system");
       } else if (returnObject.role == "functionReturnValue") {
         const val = returnObject.value;
-        // Ignore nested LLM payloads that look like: '{"response":{...'
-        // messy work around to avoid endless loops
+        const parsedVal = tryParseFunctionReturnValue(val);
+        const responseValue = parsedVal && typeof parsedVal.response === 'string'
+          ? parsedVal.response
+          : null;
+        const serialWriteValue = parsedVal && typeof parsedVal["Writing to Serial"] === 'string'
+          ? parsedVal["Writing to Serial"]
+          : null;
+
+        // Avoid noisy loops from nested payloads and low-level function errors.
         if (typeof val === "string" && val.trim().startsWith('{"response":{')) {
           console.log("Ignored functionReturnValue: nested response payload");
+        } else if (serialWriteValue) {
+          // Do not send serial write acknowledgements back to the LLM (prevents JSON echo loops).
+          if (serialWriteValue.startsWith('Error:')) {
+            console.log("Serial write returned error:", serialWriteValue);
+            updateFrontend(serialWriteValue, "error");
+          } else {
+            console.log("Serial write acknowledged:", serialWriteValue);
+            updateFrontend(`Executed: ${serialWriteValue}`, "system");
+          }
+        } else if (responseValue && responseValue.startsWith("Error:")) {
+          console.log("Function call returned error; not sending payload back to LLM:", responseValue);
+          updateFrontend(responseValue, "error");
         } else {
           console.log("sending value back to LLM:", val);
           LLM_API.send(val, "system").then((response) => {
@@ -655,13 +865,21 @@ process.on('unhandledRejection', async (reason, promise) => {
 });
 
 
-async function testNetworkPerformance() {
+async function testNetworkPerformance(llmSettings = {}) {
   console.log('🔍 Testing network performance...');
 
   try {
+    const provider = (llmSettings.provider || 'openai').toLowerCase();
+    const endpoint = llmSettings.url || (provider === 'openai'
+      ? 'https://api.openai.com/v1/chat/completions'
+      : 'http://127.0.0.1:11434/api/chat');
+
+    const endpointUrl = new URL(endpoint);
+    const endpointHost = endpointUrl.hostname;
+
     // Test DNS resolution speed
     const dnsStart = Date.now();
-    await dns.promises.lookup('api.openai.com');
+    await dns.promises.lookup(endpointHost);
     const dnsTime = Date.now() - dnsStart;
     console.log(`DNS resolution: ${dnsTime}ms`);
 
@@ -675,23 +893,23 @@ async function testNetworkPerformance() {
     const httpTime = Date.now() - httpStart;
     console.log(`HTTP request: ${httpTime}ms`);
 
-    // Test to OpenAI specifically (without API key)
-    const openaiStart = Date.now();
+    // Test to configured provider endpoint
+    const providerStart = Date.now();
     try {
-      await fetch('https://api.openai.com/', {
+      await fetch(endpoint, {
         signal: AbortSignal.timeout(10000),
         headers: { 'User-Agent': 'RaspberryPi-Test' }
       });
     } catch (e) {
-      // Expected to fail, we just want timing
+      // Even if endpoint returns an error code, this timing still helps diagnose connectivity.
     }
-    const openaiTime = Date.now() - openaiStart;
-    console.log(`OpenAI endpoint: ${openaiTime}ms`);
+    const providerTime = Date.now() - providerStart;
+    console.log(`Provider endpoint (${provider}): ${providerTime}ms`);
 
     return {
       dns: dnsTime,
       http: httpTime,
-      openai: openaiTime
+      provider: providerTime
     };
 
   } catch (error) {

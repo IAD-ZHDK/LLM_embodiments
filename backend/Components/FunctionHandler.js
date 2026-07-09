@@ -159,7 +159,7 @@ class FunctionHandler {
         functionReturnPromise = method.call(this.comObject);
       } else if (functionName == "checkCamera") {
         // get images 
-        console.log("📸 sending image to chatGPT")
+        console.log("📸 sending image to LLM")
         functionReturnPromise = captureImage().then(result => {
           // Send image path to frontend
           if (result && result.value) {
@@ -176,7 +176,7 @@ class FunctionHandler {
         });
 
       } else if (functionName == "getImageDescription") {
-        console.log("📸 getting image description from chatGPT")
+        console.log("📸 getting image description from LLM")
         functionReturnPromise = getImageDescription();
       } else if (functionName in this.config.functions.notifications) {
         // check if functionName is on config.functions.notifications 

@@ -406,6 +406,31 @@ def find_respeaker_device():
         print(f"Error finding audio devices: {e}", file=sys.stderr)
         return None
 
+def resolve_tts_model_name(model_value):
+    """Resolve model name from either string model id or legacy numeric index."""
+    if isinstance(model_value, int):
+        return MODEL_NAMES[model_value] if 0 <= model_value < len(MODEL_NAMES) else None
+
+    if isinstance(model_value, str):
+        candidate = model_value.strip()
+        if not candidate:
+            return None
+
+        # Legacy index as string
+        if candidate.isdigit():
+            idx = int(candidate)
+            return MODEL_NAMES[idx] if 0 <= idx < len(MODEL_NAMES) else None
+
+        if candidate in TTS_MODELS:
+            return candidate
+
+        if not candidate.endswith('.onnx') and f"{candidate}.onnx" in TTS_MODELS:
+            return f"{candidate}.onnx"
+
+        return None
+
+    return None
+
 def main():
     """Main TTS loop"""
     global playback_thread, stop_event, pause_event, output_device
@@ -436,12 +461,12 @@ def main():
             
             # Handle TTS request
             text = msg.get("text", "") if isinstance(msg, dict) else line
-            model_no = int(msg.get("model", 0)) if isinstance(msg, dict) else 0
-            
-            if not text or not (0 <= model_no < len(MODEL_NAMES)):
+            raw_model = msg.get("model", MODEL_NAMES[0]) if isinstance(msg, dict) else MODEL_NAMES[0]
+            model_name = resolve_tts_model_name(raw_model)
+
+            if not text or not model_name:
                 continue
-            
-            model_name = MODEL_NAMES[model_no]
+
             try:
                 voice = get_voice(model_name)
             except (FileNotFoundError, Exception) as e:

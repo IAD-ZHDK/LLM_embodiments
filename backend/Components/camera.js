@@ -74,8 +74,8 @@ function captureWithNodeWebcam(fileName) {
 
       /*
       try {
-        const chatgpt = new ChatGPTAPI(config, functionHandler);
-        const result = await chatgpt.sendImage(base64Image, "user");
+        const llm = new LLMAPI(config, functionHandler);
+        const result = await llm.sendImage(base64Image, "user");
         console.log("Vision API result received");
         resolve(result);
       } catch (apiErr) {
@@ -118,8 +118,8 @@ function captureWithDirectCommands(fileName) {
       /*
       try {
       // Send to Vision API
-      const chatgpt = new ChatGPTAPI(config, functionHandler);
-      const result = await chatgpt.sendImage(base64Image, "user");
+      const llm = new LLMAPI(config, functionHandler);
+      const result = await llm.sendImage(base64Image, "user");
       console.log("Vision API result received");
       resolve(result);
     } catch (fileErr) {

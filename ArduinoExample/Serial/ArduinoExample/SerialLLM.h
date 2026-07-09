@@ -1,5 +1,5 @@
-#ifndef SERIALCHATGPT_H
-#define SERIALCHATGPT_H
+#ifndef SERIALLLM_H
+#define SERIALLLM_H
 
 #include <Arduino.h>
 

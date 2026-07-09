@@ -1,16 +1,10 @@
-#  ChatGPT_arduinoV2 
+#  LLM_Embodiements
 
 This project makes it easy to connect physical devices to a large language model, for prototyping so called "Large Language Objects". The project is essentially a voice assistant optimised for running on a raspberry pi with an attached Arduino. The code has been tested on Linux and Mac OS, and is optimised for Raspbery PI. 
 
-After following the installation instructions, create an .env file with the openAI api key in the following format, or add it to the config.js file on an external usb stick. 
-
- ```bash
-OPENAI_API_KEY='******************************' 
-  ```
-
 ---
 
-## 🚀 Quick Start: Setting Up on a New Raspberry Pi
+## 🚀 Setting Up on a New Raspberry Pi
 
 ### 1. **Prepare the SD Card**
 - Flash the latest Raspberry Pi OS (Desktop) to your SD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
@@ -39,8 +33,8 @@ In config select "Interfacing Options" > "Serial".
 
 ### **Clone the Repository**
 ```bash
-git clone https://github.com/IAD-ZHDK/ChatGPT_arduinoV2.git
-cd ChatGPT_arduinoV2
+git clone https://github.com/IAD-ZHDK/LLM_Embodiements.git
+cd LLM_Embodiements
 ```   
 
 ### **Get latest version after installing**
@@ -66,6 +60,94 @@ chmod +x run.sh
 ./run.sh
 ```
 
+### Model Installation (LLM + STT + TTS)
+
+This project supports local LLMs with Ollama, Vosk for speech-to-text, and Piper for text-to-speech.
+
+#### 1) Install LLM models (Ollama)
+
+Install Ollama:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Install at least one model (pick one):
+
+```bash
+# Good default for Raspberry Pi 5
+ollama pull llama3.2:3b
+
+# DeepSeek-R1-Distill
+ollama pull deepseek-r1:1.5b
+
+# Qwen2 family
+ollama pull qwen2:7b
+ollama pull qwen2.5:3b
+```
+
+Set the model in `llmSettings.model` in [config.js](config.js), for example:
+
+```js
+llmSettings: {
+  provider: "ollama",
+  model: "llama3.2:3b",
+  url: "http://127.0.0.1:11434/api/chat",
+}
+```
+
+To switch back to OpenAI, set `provider: "openai"`, a valid OpenAI model, and the OpenAI API URL.
+
+#### 2) Install STT models (Vosk)
+
+The repository already contains multiple Vosk models under `python/STTmodels/`.
+If you want to add another one manually:
+
+```bash
+cd python/STTmodels
+wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+unzip vosk-model-small-en-us-0.15.zip
+rm vosk-model-small-en-us-0.15.zip
+```
+
+Set the STT model name in [config.js](config.js) under the active language profile (folder name, not a number).
+
+#### 3) Install TTS models (Piper)
+
+Place both `.onnx` and matching `.onnx.json` files in `python/TTSmodels/`.
+Example (English voice):
+
+```bash
+cd python/TTSmodels
+wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
+```
+
+Set the TTS model file name in [config.js](config.js) under the active language profile.
+
+#### 4) Select language profile
+
+To switch language for STT and TTS together, change `activeLanguage` in [config.js](config.js) and restart:
+
+```js
+activeLanguage: "en", // or "de"
+speech: {
+  sttBackend: "vosk",
+  languageProfiles: {
+    en: {
+      speechToTextModel: "vosk-model-small-en-us-0.15",
+      textToSpeechModel: "en_GB-alan-low.onnx",
+    },
+    de: {
+      speechToTextModel: "vosk-model-small-de-0.15",
+      textToSpeechModel: "de_DE-thorsten-medium.onnx",
+    },
+  },
+}
+```
+
+Use model names directly (no numeric indexing).
+
 ## Manual Setup
 
 ### 1. **Install Dependencies**
@@ -89,13 +171,13 @@ On macOS:
 
 ### 2. **Install Project Dependencies**
 ```bash
-cd ChatGPT_arduinoV2
+cd LLM_Embodiements
 npm install
 ```
 
 ### 3. Create and activate a Python virtual environment and install packages
 
-This project requires Python 3.13.3 (please do not use a newer Python version, until onyxruntime is support). The instructions below assume the Python 3.13 executable is available as `python3.13`.
+This project requires Python 3.13.3 (please do not use a newer Python version, until onyxruntime is supported). The instructions below assume the Python 3.13 executable is available as `python3.13`.
 
 ```bash
 # create venv with Python 3.13.3
@@ -139,7 +221,7 @@ After installation verify the binary:
 python3.13 --version
 # expected: Python 3.13.3
 ```
-### 4. setup .env file
+### 4. setup .env file (only for OpenAI provider)
 
 ```bash
 nano .env
@@ -175,6 +257,7 @@ chmod +x run.sh
 ./run.sh
 ```
 
+
 ### Debuging with terminal 
 
 - Install wscat for terminal websocket connections
@@ -194,15 +277,15 @@ chmod +x run.sh
 
 ###  AutoStart
 
-Add  /.config/autostart/chatgpt-arduino.desktop with the following content:
+Add  /.config/autostart/llm-embodiments.desktop with the following content:
 
 ```bash
   [Desktop Entry]
   Type=Application
-  Name=ChatGPT_arduinoV2
-  Comment=Start ChatGPT_arduinoV2 Kiosk
-  Exec=/home/pi/ChatGPT_arduinoV2/run.sh
-  Path=/home/pi/ChatGPT_arduinoV2/
+  Name=LLM_Embodiments
+  Comment=Start LLM_Embodiments Kiosk
+  Exec=/home/pi/LLM_Embodiments/run.sh
+  Path=/home/pi/LLM_Embodiments/
   Icon=utilities-terminal
   Terminal=false
 ```
@@ -218,6 +301,6 @@ Add  /.config/autostart/chatgpt-arduino.desktop with the following content:
 ###  Todo
 
 - Auto.restart when Arduino disconnected 
-- Recent changes to Chatgpt API for images: fix needed
+- Recent changes to LLM API for images: fix needed
 - add physical button to restart whole application 
 - BLE integration 
