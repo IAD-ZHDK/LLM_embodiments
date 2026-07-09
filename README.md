@@ -33,7 +33,7 @@ In config select "Interfacing Options" > "Serial".
 
 ### **Clone the Repository**
 ```bash
-git clone https://github.com/IAD-ZHDK/LLM_Embodiements.git
+git clone https://github.com/IAD-ZHDK/LLM_embodiments.git
 cd LLM_Embodiements
 ```   
 
@@ -84,6 +84,9 @@ ollama pull deepseek-r1:1.5b
 # Qwen2 family
 ollama pull qwen2:7b
 ollama pull qwen2.5:3b
+
+# Lightweight tool-calling model (tested)
+ollama pull hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M
 ```
 
 Set the model in `llmSettings.model` in [config.js](config.js), for example:
@@ -91,10 +94,15 @@ Set the model in `llmSettings.model` in [config.js](config.js), for example:
 ```js
 llmSettings: {
   provider: "ollama",
-  model: "llama3.2:3b",
+  model: "hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M",
   url: "http://127.0.0.1:11434/api/chat",
 }
 ```
+
+Tool-calling compatibility note:
+- The LiquidAI model above was verified against `/api/chat` with `tools` enabled.
+- It returns Ollama-native `message.tool_calls` entries (for example `set_LED` with `arguments.value = 1`).
+- This matches the current Python backend parser in `backend_python/llm_api.py`, so no adapter is needed.
 
 To switch back to OpenAI, set `provider: "openai"`, a valid OpenAI model, and the OpenAI API URL.
 

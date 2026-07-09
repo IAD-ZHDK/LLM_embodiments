@@ -30,6 +30,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "presence_penalty": 0.0,
         "max_tokens": 2048,
         "user_id": "1",
+        "archFunction": {
+            "enabled": False,
+        },
+        "aiHatPlus": {
+            "autoDetect": True,
+            "preferWhenAvailable": True,
+            "provider": "openai",
+            "url": "",
+        },
         "toolPolicy": {
             "enableIntentFilter": False,
             "commandKeywords": [],

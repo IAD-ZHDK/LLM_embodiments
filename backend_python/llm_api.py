@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -18,6 +20,8 @@ class LLMAPI:
         self.model = settings.get("model", "llama3.2:3b")
         self.max_tokens = settings.get("max_tokens", 2048)
         self.user_id = settings.get("user_id", "1")
+        self.ai_hat_status = self._detect_ai_hat_plus()
+        self._apply_ai_hat_routing(settings)
 
     def _debug_enabled(self) -> bool:
         settings = self.config.get("llmSettings", {})
@@ -40,6 +44,55 @@ class LLMAPI:
         print(f"🔎 LLM DEBUG {label}: {text}")
 
     @staticmethod
+    def _run_command(command: List[str]) -> Optional[subprocess.CompletedProcess]:
+        try:
+            return subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
+        except Exception:
+            return None
+
+    def _detect_ai_hat_plus(self) -> Dict[str, Any]:
+        status: Dict[str, Any] = {
+            "attached": False,
+            "devicePaths": [],
+            "hailortcli": False,
+            "details": [],
+        }
+
+        for path in ("/dev/hailo0", "/dev/hailo1", "/dev/hailort0", "/dev/hailort"):
+            if os.path.exists(path):
+                status["attached"] = True
+                status["devicePaths"].append(path)
+
+        hailo_cli = shutil.which("hailortcli")
+        if hailo_cli:
+            status["hailortcli"] = True
+            probe = self._run_command([hailo_cli, "fw-control", "identify"])
+            if probe and probe.returncode == 0:
+                status["attached"] = True
+                output = (probe.stdout or "").strip()
+                if output:
+                    status["details"].append(output[:300])
+
+        return status
+
+    def _apply_ai_hat_routing(self, settings: Dict[str, Any]) -> None:
+        ai_hat_cfg = settings.get("aiHatPlus", {}) if isinstance(settings, dict) else {}
+        if not isinstance(ai_hat_cfg, dict):
+            return
+
+        auto_detect = bool(ai_hat_cfg.get("autoDetect", True))
+        prefer = bool(ai_hat_cfg.get("preferWhenAvailable", True))
+        endpoint = str(ai_hat_cfg.get("url", "")).strip()
+        provider = str(ai_hat_cfg.get("provider", "openai")).strip().lower()
+
+        if auto_detect and prefer and self.ai_hat_status.get("attached") and endpoint:
+            self.provider = provider or self.provider
+            self.url = endpoint
+            print(f"🧠 AI HAT+ detected. Routing LLM requests to {self.url}")
+        elif auto_detect and self.ai_hat_status.get("attached") and not endpoint:
+            print("🧠 AI HAT+ detected, but llmSettings.aiHatPlus.url is empty. Keeping default LLM endpoint.")
+
+    @staticmethod
     def _default_url(provider: str) -> str:
         if provider in ("ollama", "local"):
             return "http://127.0.0.1:11434/api/chat"
@@ -52,7 +105,58 @@ class LLMAPI:
             msg["name"] = function_name
         messages.append(msg)
         self.config.setdefault("conversationProtocol", []).append(msg)
+        if self._is_arch_function_mode():
+            messages = self._apply_arch_system_prompt(messages)
         return messages
+
+    def _is_arch_function_mode(self) -> bool:
+        settings = self.config.get("llmSettings", {})
+        arch_cfg = settings.get("archFunction", {}) if isinstance(settings, dict) else {}
+        explicit = bool(arch_cfg.get("enabled", False)) if isinstance(arch_cfg, dict) else False
+        return explicit or ("arch-function" in str(self.model).lower())
+
+    def _tools_for_prompt(self) -> List[Dict[str, Any]]:
+        tools: List[Dict[str, Any]] = []
+        for fn in self.function_handler.get_all_functions():
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": fn["name"],
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                }
+            )
+        return tools
+
+    def _apply_arch_system_prompt(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        tools = self._tools_for_prompt()
+        tool_text = "\n".join(json.dumps(t, ensure_ascii=True) for t in tools)
+        arch_format = (
+            "# Tools\n"
+            "You may call one or more functions to assist with the user query.\n"
+            "Function signatures are inside <tools></tools> tags.\n"
+            "<tools>\n"
+            f"{tool_text}\n"
+            "</tools>\n\n"
+            "For each function call, return a JSON object wrapped in <tool_call></tool_call>:\n"
+            "<tool_call>\n"
+            '{"name": "<function-name>", "arguments": {"key": "value"}}\n'
+            "</tool_call>"
+        )
+
+        out = [dict(m) for m in messages]
+        for idx, msg in enumerate(out):
+            if msg.get("role") == "system":
+                content = str(msg.get("content", "")).strip()
+                if "<tool_call>" not in content or "<tools>" not in content:
+                    msg["content"] = f"{content}\n\n{arch_format}" if content else arch_format
+                out[idx] = msg
+                return out
+
+        out.insert(0, {"role": "system", "content": arch_format})
+        return out
 
     def _build_ollama_request(
         self,
@@ -69,19 +173,7 @@ class LLMAPI:
             },
         }
         if include_tools:
-            tools = []
-            for fn in self.function_handler.get_all_functions():
-                tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": fn["name"],
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
-                        },
-                    }
-                )
-            payload["tools"] = tools
+            payload["tools"] = self._tools_for_prompt()
         return payload
 
     def _build_openai_request(
@@ -199,6 +291,54 @@ class LLMAPI:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
         return response.json()
 
+    def _format_provider_error(self, err: Any) -> str:
+        message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        lowered = message.lower()
+
+        if self.provider in ("ollama", "local") and "not found" in lowered and "model" in lowered:
+            if "/" in str(self.model):
+                return (
+                    f"Model '{self.model}' is a Hugging Face model ID, not an Ollama tag. "
+                    "Use an Ollama model tag (e.g. 'qwen2.5:3b') with provider='ollama', "
+                    "or set llmSettings.aiHatPlus.url to your AI HAT+ OpenAI-compatible endpoint "
+                    "and set provider='openai'."
+                )
+            return (
+                f"Model '{self.model}' not found in Ollama. Run 'ollama pull {self.model}' "
+                "or pick an installed model from 'ollama list'."
+            )
+
+        return message
+
+    @staticmethod
+    def _extract_arch_tool_call(message: str) -> Optional[Dict[str, Any]]:
+        if not message:
+            return None
+        match = re.search(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", message, flags=re.IGNORECASE)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(1))
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        name = data.get("name")
+        args = data.get("arguments", {})
+        if not isinstance(name, str) or not name.strip():
+            return None
+        if not isinstance(args, dict):
+            args = {}
+        return {"name": name.strip(), "arguments": args}
+
+    @staticmethod
+    def _strip_arch_markup(message: str) -> str:
+        if not message:
+            return ""
+        cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", message, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<tool_response>[\s\S]*?</tool_response>", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
+
     def send(self, text: str, role: str, function_name: Optional[str] = None) -> Dict[str, Any]:
         if not text:
             return {"role": "assistant", "message": ""}
@@ -211,9 +351,12 @@ class LLMAPI:
         else:
             payload = self._build_openai_request(messages)
             api_key = self.config.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-            if not api_key:
+            settings = self.config.get("llmSettings", {}) if isinstance(self.config, dict) else {}
+            require_key = bool(settings.get("requireApiKey", str(self.url).startswith("https://api.openai.com")))
+            if require_key and not api_key:
                 return {"role": "error", "message": "OpenAI API key not found"}
-            headers["Authorization"] = f"Bearer {api_key}"
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
 
         if self._debug_enabled():
             self._debug_log("request.payload", payload)
@@ -228,9 +371,7 @@ class LLMAPI:
 
         if isinstance(data, dict) and data.get("error"):
             err = data["error"]
-            if isinstance(err, dict):
-                return {"role": "error", "message": err.get("message", str(err))}
-            return {"role": "error", "message": str(err)}
+            return {"role": "error", "message": self._format_provider_error(err)}
 
         openai_fc = data.get("choices", [{}])[0].get("message", {}).get("function_call") if isinstance(data, dict) else None
         ollama_tc = data.get("message", {}).get("tool_calls", []) if isinstance(data, dict) else []
@@ -266,6 +407,16 @@ class LLMAPI:
                     return self.function_handler.handle_call(name, raw_args)
 
         message = self._extract_message_text(data) if isinstance(data, dict) else ""
+
+        arch_call = self._extract_arch_tool_call(message)
+        if arch_call:
+            name = arch_call["name"]
+            args = arch_call.get("arguments", {})
+            if self._allow_tool_call(role, text, name):
+                args = self._normalize_tool_args(name, args, text)
+                return self.function_handler.handle_call(name, args)
+
+        message = self._strip_arch_markup(message)
 
         # If the model tried a blocked tool-call and returned no text, retry once without tools/functions.
         if not message:
