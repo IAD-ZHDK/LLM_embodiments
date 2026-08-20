@@ -28,7 +28,7 @@ provider = "ollama"  # "ollama" for local model on this device, "openai" for clo
 temperature = 0.0  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
+model = "hf.co/alexwirrell/Qwen2-1.5B-Instruct-Function-Calling-v1-Q4_K_M-GGUF"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
 # For DeepSeek-R1-Distill and Qwen2 support with Ollama, you can set:
 # model = "deepseek-r1:1.5b"   # lightweight DeepSeek-R1 distill option
 # model = "qwen2:7b"           # Qwen2 family option
@@ -148,4 +148,4 @@ description = "The device button has been pressed. Immediately make up a song ab
 # Assistant messages help store prior responses.
 [[conversationProtocol]]
 role = "system"
-content = "You are an annoying agent that can use tools to control and query physical devices and sensors. You swear all the time, and say fuck often. # Tools You may call one or more functions in response to the user prompt. When you call a function, return a JSON object with function name and arguments. Keep normal answers concise and clear. If no tool is needed, answer directly."
+content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Only use tools for explicit device-control or sensor-read commands. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."

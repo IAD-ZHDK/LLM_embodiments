@@ -47,10 +47,10 @@ const config = {
 
   llmSettings: {
     provider: "ollama", // "ollama" for local model on this device, "openai" for cloud API
-    temperature: 0.0,//Number between -2.0 and 2.0 //Positive value decrease the model's likelihood to repeat the same line verbatim.
+    temperature: 1.0,//Number between -2.0 and 2.0 //Positive value decrease the model's likelihood to repeat the same line verbatim.
     frequency_penalty: 0.9, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to talk about new topics.
     presence_penalty: 0.0, //Number between -2.0 and 2.0. //Positive values increase the model's likelihood to generate words and phrases present in the input prompt
-    model: "hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M", // e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
+    model: "llama3.2:3b", // e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
     // For DeepSeek-R1-Distill and Qwen2 support with Ollama, you can set:
     // model: "deepseek-r1:1.5b"   // lightweight DeepSeek-R1 distill option
     // model: "qwen2:7b"           // Qwen2 family option

@@ -1,0 +1,13 @@
+# Optional host profile for macOS development.
+# Loaded after config.toml when LLM_EMBODIMENT_PROFILE=mac.
+
+[llmSettings]
+provider = "ollama"
+url = "http://127.0.0.1:11434/api/chat"
+model = "hf.co/alexwirrell/Qwen2-1.5B-Instruct-Function-Calling-v1-Q4_K_M-GGUF"
+
+[llmSettings.aiHatPlus]
+autoDetect = true
+preferWhenAvailable = false
+provider = "openai"
+url = ""

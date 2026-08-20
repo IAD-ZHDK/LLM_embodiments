@@ -1,0 +1,15 @@
+# Optional host profile for Raspberry Pi + AI HAT+ runtime.
+# Loaded after config.toml when LLM_EMBODIMENT_PROFILE=pi.
+
+[llmSettings]
+provider = "ollama"
+url = "http://127.0.0.1:11434/api/chat"
+model = "qwen2.5:3b"
+
+[llmSettings.aiHatPlus]
+autoDetect = true
+preferWhenAvailable = true
+provider = "openai"
+# Set this to your AI HAT+ OpenAI-compatible endpoint on the Pi.
+# Example: "http://127.0.0.1:8080/v1/chat/completions"
+url = ""

@@ -284,6 +284,23 @@ class LLMAPI:
                     if "value" in item:
                         normalized["value"] = item["value"]
                     break
+
+        if "value" not in normalized:
+            for key in ("is_on", "on", "enabled", "active"):
+                val = normalized.get(key)
+                if isinstance(val, bool):
+                    normalized["value"] = 1 if val else 0
+                    break
+
+        if "value" not in normalized:
+            state_like = normalized.get("state")
+            if isinstance(state_like, str):
+                lowered = state_like.strip().lower()
+                if lowered in ("on", "true", "enabled", "active", "start"):
+                    normalized["value"] = 1
+                elif lowered in ("off", "false", "disabled", "inactive", "stop"):
+                    normalized["value"] = 0
+
         return normalized
 
     @staticmethod
@@ -330,6 +347,64 @@ class LLMAPI:
         if not isinstance(args, dict):
             args = {}
         return {"name": name.strip(), "arguments": args}
+
+    @staticmethod
+    def _extract_fenced_json_tool_call(message: str) -> Optional[Dict[str, Any]]:
+        if not message:
+            return None
+
+        blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)```", message, flags=re.IGNORECASE)
+        for block in blocks:
+            payload = block.strip()
+            if not payload:
+                continue
+            try:
+                data = json.loads(payload)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            # Common direct tool-call shape: {"name":"...", "arguments":{...}}
+            name = data.get("name")
+            args = data.get("arguments", {})
+            if isinstance(name, str) and name.strip():
+                if not isinstance(args, dict):
+                    args = {}
+                return {"name": name.strip(), "arguments": args}
+
+            # Some small models emit wrapped shape: {"function": {...}}.
+            # We only accept executable calls and explicitly flag schema blobs.
+            fn_obj = data.get("function")
+            if isinstance(fn_obj, dict):
+                fn_name = fn_obj.get("name")
+                fn_args = fn_obj.get("arguments", {})
+
+                if isinstance(fn_name, str) and fn_name.strip() and isinstance(fn_args, dict):
+                    return {"name": fn_name.strip(), "arguments": fn_args}
+
+                fn_params = fn_obj.get("parameters")
+                has_schema_signature = isinstance(fn_params, dict) and any(
+                    key in fn_params for key in ("properties", "required", "type", "title")
+                )
+                if has_schema_signature:
+                    return {"_schema_only": True}
+        return None
+
+    def _resolve_tool_alias(self, raw_name: str, args: Dict[str, Any]) -> Optional[str]:
+        name = (raw_name or "").strip()
+        if not name:
+            return None
+
+        catalog = self._function_catalog(self.config)
+        if name in catalog:
+            return name
+
+        arg_name = str(args.get("name", "")).strip().lower()
+        if name.lower() in {"toggle", "switch", "set", "set_state", "inform"} and arg_name == "led" and "set_LED" in catalog:
+            return "set_LED"
+
+        return None
 
     @staticmethod
     def _strip_arch_markup(message: str) -> str:
@@ -382,6 +457,8 @@ class LLMAPI:
                 {"openai_function_call": openai_fc, "ollama_tool_calls": ollama_tc},
             )
 
+        blocked_tool_attempt = False
+
         if openai_fc and openai_fc.get("name"):
             name = openai_fc["name"]
             try:
@@ -391,6 +468,7 @@ class LLMAPI:
             if self._allow_tool_call(role, text, name):
                 args = self._normalize_tool_args(name, args, text)
                 return self.function_handler.handle_call(name, args)
+            blocked_tool_attempt = True
 
         if ollama_tc:
             first = ollama_tc[0].get("function", {})
@@ -405,6 +483,7 @@ class LLMAPI:
                 if self._allow_tool_call(role, text, name):
                     raw_args = self._normalize_tool_args(name, raw_args or {}, text)
                     return self.function_handler.handle_call(name, raw_args)
+                blocked_tool_attempt = True
 
         message = self._extract_message_text(data) if isinstance(data, dict) else ""
 
@@ -415,10 +494,28 @@ class LLMAPI:
             if self._allow_tool_call(role, text, name):
                 args = self._normalize_tool_args(name, args, text)
                 return self.function_handler.handle_call(name, args)
+            blocked_tool_attempt = True
+
+        fenced_call = self._extract_fenced_json_tool_call(message)
+        if fenced_call:
+            if fenced_call.get("_schema_only"):
+                blocked_tool_attempt = True
+                message = ""
+            else:
+                raw_name = fenced_call.get("name", "")
+                args = fenced_call.get("arguments", {})
+                resolved_name = self._resolve_tool_alias(str(raw_name), args if isinstance(args, dict) else {})
+                if resolved_name and self._allow_tool_call(role, text, resolved_name):
+                    norm_args = self._normalize_tool_args(resolved_name, args if isinstance(args, dict) else {}, text)
+                    return self.function_handler.handle_call(resolved_name, norm_args)
+                blocked_tool_attempt = True
 
         message = self._strip_arch_markup(message)
 
-        # If the model tried a blocked tool-call and returned no text, retry once without tools/functions.
+        if blocked_tool_attempt:
+            message = ""
+
+        # If tool-calling output was blocked or no text was produced, retry once without tools/functions.
         if not message:
             try:
                 if self.provider in ("ollama", "local"):
@@ -430,6 +527,13 @@ class LLMAPI:
                     message = self._extract_message_text(fallback_data)
             except Exception:
                 pass
+
+        # Last-resort cleanup for small models that keep emitting pseudo tool-call JSON.
+        if message and (self._extract_arch_tool_call(message) or self._extract_fenced_json_tool_call(message)):
+            if role == "user" and not self._is_command_like(text):
+                message = "Yeah. What do you want?"
+            else:
+                message = ""
 
         self.config.setdefault("conversationProtocol", []).append({"role": "assistant", "content": message})
         return {"role": "assistant", "message": message}

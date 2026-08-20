@@ -16,7 +16,6 @@ This project makes it easy to connect physical devices to a large language model
   ```bash
   ssh <username>@<devicename>.local
   ```
- 
   
 IMPORTANT: Enable Serial Interface
 

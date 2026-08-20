@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Any, Dict
@@ -69,19 +70,41 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 
 def load_config(repo_root: Path) -> Dict[str, Any]:
     config_path = repo_root / "config.toml"
+    config = dict(DEFAULT_CONFIG)
+
     if not config_path.exists():
-        return DEFAULT_CONFIG
+        loaded: Dict[str, Any] = {}
+    else:
+        try:
+            loaded = _toml_load_config(config_path)
+        except tomllib.TOMLDecodeError as exc:
+            # Refuse to silently fall back to DEFAULT_CONFIG — a bad config means
+            # the user's tools, language profiles, persona, and AI HAT+ settings
+            # would all be ignored at runtime, which is much harder to debug than
+            # a startup crash with the parser's line/column in the traceback.
+            raise RuntimeError(
+                f"Failed to parse {config_path} as TOML. Fix the file and restart "
+                f"the backend. Parser error: {exc}"
+            ) from exc
 
-    try:
-        loaded = _toml_load_config(config_path)
-    except tomllib.TOMLDecodeError as exc:
-        # Refuse to silently fall back to DEFAULT_CONFIG — a bad config means
-        # the user's tools, language profiles, persona, and AI HAT+ settings
-        # would all be ignored at runtime, which is much harder to debug than
-        # a startup crash with the parser's line/column in the traceback.
-        raise RuntimeError(
-            f"Failed to parse {config_path} as TOML. Fix the file and restart "
-            f"the backend. Parser error: {exc}"
-        ) from exc
+    config = _deep_merge(config, loaded)
 
-    return _deep_merge(DEFAULT_CONFIG, loaded)
+    profile = os.getenv("LLM_EMBODIMENT_PROFILE", "").strip().lower()
+    override_paths = []
+    if profile:
+        override_paths.append(repo_root / f"config.{profile}.toml")
+    override_paths.append(repo_root / "config.local.toml")
+
+    for override_path in override_paths:
+        if not override_path.exists():
+            continue
+        try:
+            override = _toml_load_config(override_path)
+        except tomllib.TOMLDecodeError as exc:
+            raise RuntimeError(
+                f"Failed to parse {override_path} as TOML. Fix the file and restart "
+                f"the backend. Parser error: {exc}"
+            ) from exc
+        config = _deep_merge(config, override)
+
+    return config
