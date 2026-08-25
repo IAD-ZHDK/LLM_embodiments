@@ -12,14 +12,16 @@ LOG_FILE="$LOG_DIR/kiosk.log"
 # Restart marker file used by USB watcher
 RESTART_FILE="$SCRIPT_DIR/.kiosk_restart_request"
 
-# Function for logging
+# Function for logging - writes to both the terminal and the log file directly, rather than
+# piping the whole script's stdout/stderr through tee. The backend drives a full-screen Textual
+# UI that needs a real tty: it sends terminal-capability queries and blocks waiting for a reply,
+# which never arrives if stdout is a pipe (this caused it to hang right at "Waiting for
+# application startup" with zero further output - looked exactly like a stuck process).
 log() {
-  # write to stdout; stdout is redirected to the main tee which appends to the log file
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+  local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+  echo "$msg"
+  echo "$msg" >> "$LOG_FILE"
 }
-
-# Redirect all stdout and stderr to log file (avoid process-substitution which can change signal delivery)
-exec > >(tee -a "$LOG_FILE") 2>&1
 
 log "Starting application"
 
@@ -86,64 +88,12 @@ cd "$SCRIPT_DIR" || exit 1
 # Try to suppress desktop pop-ups (no-op on macOS)
 suppress_desktop_popups
 
-# Function to check for updates
-check_for_updates() {
-    log "Checking for updates..."
-    
-    # Fetch latest changes without modifying local files
-    if ! git fetch origin main; then
-        log "⚠️ Failed to fetch updates. Continuing with current version."
-        return 1
-    fi
-    # Get the number of commits behind
-    COMMITS_BEHIND=$(git rev-list HEAD..origin/main --count)
-    
-    if [ "$COMMITS_BEHIND" -gt 0 ]; then
-        log "📦 Updates available ($COMMITS_BEHIND new commits)"
-        
-        # Stash any local changes
-        if [ -n "$(git status --porcelain)" ]; then
-            log "Stashing local changes..."
-            git stash
-        fi
-        
-        # Pull updates
-        if git pull origin main; then
-            log "✅ Updated successfully"
-            
-            # Update python packages if requirements.txt changed
-            if git diff HEAD@{1} HEAD --name-only | grep -q "requirements.txt"; then
-                log "📦 Python requirements changed, updating packages..."
-                source python/venv/bin/activate
-                pip3 install --no-deps -r python/requirements.txt
-            fi
-            
-            # Pop stashed changes if any
-            if [ -n "$(git stash list)" ]; then
-                log "Restoring local changes..."
-                git stash pop
-            fi
-            
-            # Restart the script
-            log "🔄 Restarting to apply updates..."
-            exec "$0"
-        else
-            log "⚠️ Update failed. Continuing with current version."
-        fi
-    else
-        log "✅ Already running latest version"
-    fi
-}
-
-# Check for updates
-check_for_updates
-
 # Activate Python virtual environment
-if [ -f "$SCRIPT_DIR/python/venv/bin/activate" ]; then
+if [ -f "$SCRIPT_DIR/backend/venv/bin/activate" ]; then
   # shellcheck source=/dev/null
-  source "$SCRIPT_DIR/python/venv/bin/activate"
+  source "$SCRIPT_DIR/backend/venv/bin/activate"
 else
-  log "⚠️ Python venv not found at python/venv - continuing without venv activation."
+  log "⚠️ Python venv not found at backend/venv - continuing without venv activation."
 fi
 
 # Function to clean up on exit
@@ -168,27 +118,6 @@ cleanup() {
   lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
   sleep 1
 
- # Kill backend process
-  if [[ -n "${BACKEND_PID:-}" ]]; then
-    log "Killing backend (pid: $BACKEND_PID)..."
-    kill "$BACKEND_PID" 2>/dev/null || true
-    wait "$BACKEND_PID" 2>/dev/null || true
-  fi
-
-  # Try to kill Chromium by PID
-  if [[ -n "$CHROMIUM_PID" ]]; then
-    log "Killing chromium (pid: $CHROMIUM_PID)..."
-    kill "$CHROMIUM_PID" 2>/dev/null || true
-    sleep 1
-    if ps -p "$CHROMIUM_PID" > /dev/null 2>&1; then
-      kill -9 "$CHROMIUM_PID" 2>/dev/null || true
-    fi
-  fi
-
-  # Fallback: kill any chromium-browser / Chrome processes
-  pkill -f chromium-browser 2>/dev/null || true
-  pkill -f "Google Chrome" 2>/dev/null || true
-  pkill -o chromium 2>/dev/null || true
 
   # Final attempt: free ports again
   lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
@@ -209,25 +138,6 @@ cleanup
 if lsof -ti tcp:3000 >/dev/null; then
   log "Port 3000 is still in use. Exiting..."
   exit 1
-fi
-
-# Setup WiFi permissions only on Raspberry Pi (Linux)
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-  log "Setting up WiFi management permissions for Raspberry Pi..."
-  
-  # Check if we need to add the sudoers rule
-  if ! sudo -n grep -q "pi ALL=(ALL) NOPASSWD: /usr/bin/nmcli" /etc/sudoers.d/nmcli-pi 2>/dev/null; then
-    log "Adding WiFi management permissions..."
-    echo "pi ALL=(ALL) NOPASSWD: /usr/bin/nmcli" | sudo tee /etc/sudoers.d/nmcli-pi > /dev/null
-    sudo chmod 0440 /etc/sudoers.d/nmcli-pi
-    log "WiFi permissions configured."
-  else
-    log "WiFi permissions already configured."
-  fi
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-  log "Running on macOS - WiFi management not required."
-else
-  log "Unknown OS type: $OSTYPE - skipping WiFi setup."
 fi
 
 # Watcher: looks for new USB mounts that contain a config.toml and triggers a restart.
@@ -283,60 +193,41 @@ watch_for_usb() {
   done
 }
 
-# Main runtime function: starts services and kiosk browser
-run_once() {
-  # Start Python backend server in the background
-  log "Starting Python backend server..."
-  ./run_backend_python.sh &
-  BACKEND_PID=$!
+# Detects the LLM_EMBODIMENT_PROFILE (config.<profile>.toml overlay) if not already set.
+detect_profile() {
+  if [[ -n "${LLM_EMBODIMENT_PROFILE:-}" ]]; then
+    return
+  fi
+  case "$(uname -s)" in
+    Darwin) export LLM_EMBODIMENT_PROFILE="mac" ;;
+    Linux) export LLM_EMBODIMENT_PROFILE="linux" ;;
+  esac
+  if [[ -n "${LLM_EMBODIMENT_PROFILE:-}" ]]; then
+    log "Using config profile: ${LLM_EMBODIMENT_PROFILE}"
+  fi
+}
 
-  # Start USB watcher in background (gives it main PID so it can signal termination)
+# Main runtime function: starts services
+run_once() {
+  detect_profile
+
+  # Clear anything left listening on port 3000 before starting a fresh backend.
+  lsof -ti tcp:3000 | xargs -r kill -9 2>/dev/null || true
+
+  # Start USB watcher in background (it never touches the terminal, safe to background under job control)
   watch_for_usb "$$" &
   WATCHER_PID=$!
 
-  # Wait for the backend server to be ready
-  log "Waiting for backend server to be ready on http://localhost:3000 ..."
-  until curl -s http://localhost:3000 > /dev/null; do
-    sleep 2
-  done
+  # Run the backend in the foreground (not backgrounded): it drives a full-screen Textual UI that
+  # reads the controlling terminal directly. Under `set -m` job control, a *backgrounded* process
+  # doing that gets sent SIGTTIN by the kernel and is silently suspended - indistinguishable from a
+  # hang (no more output, ever). Running it in the foreground avoids that entirely.
+  log "Starting Python backend server..."
+  python3 -m backend.server
+  log "Backend process exited."
 
-  # Launch Chromium in kiosk mode on the attached display
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    log "Launching default browser on macOS..."
-    open http://localhost:3000 &
-  else
-    export DISPLAY=:0
-    log "Launching Chromium in kiosk mode..."
-    
-    # Ensure Chromium is configured to not use keyring
-    mkdir -p ~/.config/chromium/Default
-    if [ ! -f ~/.config/chromium/Default/Preferences ]; then
-      cat > ~/.config/chromium/Default/Preferences << EOL
-{
-  "credentials_enable_service": false,
-  "credentials_enable_autosignin": false
-}
-EOL
-    fi
-    
-    # Define Chromium flags to disable password prompts and other dialogs
-    CHROMIUM_FLAGS="--no-sandbox --kiosk --disable-infobars --disable-restore-session-state --disable-features=PasswordManager,GCMChannelStatus --password-store=basic --no-first-run --no-default-browser-check"
-    
-    sleep 5  # Extra wait for desktop to finish loading
-    if command -v chromium >/dev/null 2>&1; then
-      chromium $CHROMIUM_FLAGS http://localhost:3000 &
-      CHROMIUM_PID=$!
-    elif command -v chromium-browser >/dev/null 2>&1; then
-      chromium-browser $CHROMIUM_FLAGS http://localhost:3000 &
-      CHROMIUM_PID=$!
-    else
-      log "Chromium browser not found! Please install it with 'sudo apt install chromium' or 'sudo apt install chromium-browser'"
-    fi
-  fi
-
-  # Wait for background jobs (so trap works). This wait returns when all children exit.
-  wait
-  log "Background jobs have exited."
+  kill "$WATCHER_PID" 2>/dev/null || true
+  wait "$WATCHER_PID" 2>/dev/null || true
 }
 
 # Top-level loop: run and restart if the watcher requested one

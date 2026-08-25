@@ -14,8 +14,9 @@ yarn-error.log*
 # OS-specific files
 .DS_Store
 
-python/STTmodels/
-python/TTSmodels/
+backend/STTmodels/
+backend/TTSmodels/
+backend/venv/
 scratch_files
 # Python cache
 __pycache__/
@@ -24,3 +25,6 @@ python-scripts/venv/
 
 #  restart marker file
 .kiosk_restart_request
+
+# Real device WiFi/backend credentials (see WifiSecrets.example.h for the template)
+ArduinoExample/WiFi/M5StackExample/WifiSecrets.h

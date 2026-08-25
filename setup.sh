@@ -19,13 +19,9 @@ install_on_debian() {
   echo "Updating APT repositories..."
   sudo apt update && sudo apt upgrade -y
 
-  echo "Installing required packages (python, chromium, git, libusb, build deps)..."
-  # Try modern chromium package name first, fall back to chromium-browser
+  echo "Installing required packages (python, git, libusb, build deps)..."
   if ! sudo apt install -y git libusb-1.0-0-dev build-essential python3-venv python3-dev libffi-dev portaudio19-dev; then
     echo "apt install failed; please check your package sources"
-  fi
-  if ! sudo apt install -y chromium git; then
-    sudo apt install -y chromium-browser || true
   fi
   
   # Install Python 3.13.3 from deadsnakes PPA if not already installed
@@ -185,13 +181,13 @@ setup_python_venv() {
   $PYTHON_CMD --version || true
   
   # Create venv only if missing to make the script idempotent
-  if [ ! -d "python/venv" ]; then
+  if [ ! -d "backend/venv" ]; then
     echo "Creating virtual environment with $PYTHON_CMD..."
-    $PYTHON_CMD -m venv python/venv
+    $PYTHON_CMD -m venv backend/venv
   fi
   
   # shellcheck source=/dev/null
-  source python/venv/bin/activate
+  source backend/venv/bin/activate
 
   # Diagnostics: show which python/pip we're using
   echo "Python executable: $(python -c 'import sys; print(sys.executable)')"
@@ -205,22 +201,22 @@ setup_python_venv() {
   # Always install onnxruntime regardless of Python version
   python -m pip install onnxruntime || true
   
-  if [ -f python/requirements.txt ]; then
+  if [ -f backend/requirements.txt ]; then
     # If the requirements file isn't readable, inform the user rather than attempting
     # to change ownership or permissions automatically (which can fail under some setups).
-    if [ ! -r python/requirements.txt ]; then
-      echo "python/requirements.txt exists but is not readable by this user."
-      echo "Please run: chmod a+r python/requirements.txt or adjust permissions and re-run this script."
+    if [ ! -r backend/requirements.txt ]; then
+      echo "backend/requirements.txt exists but is not readable by this user."
+      echo "Please run: chmod a+r backend/requirements.txt or adjust permissions and re-run this script."
     fi
 
     # Try installing requirements without filtering
-    echo "Installing Python requirements from python/requirements.txt (this may take a while)..."
-    if python -m pip install --no-cache-dir -v -r python/requirements.txt; then
+    echo "Installing Python requirements from backend/requirements.txt (this may take a while)..."
+    if python -m pip install --no-cache-dir -v -r backend/requirements.txt; then
       echo "Python requirements installed successfully."
     else
-      echo "Warning: Some Python packages failed to install from python/requirements.txt."
+      echo "Warning: Some Python packages failed to install from backend/requirements.txt."
       echo "See pip output above for details. Useful debug commands:"
-      echo "  source python/venv/bin/activate"
+      echo "  source backend/venv/bin/activate"
       echo "  python -m pip debug --verbose"
       echo "  python -m pip install --no-cache-dir -v <package>"
     fi

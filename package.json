@@ -2,12 +2,8 @@
     "name": "sentient-senses",
     "private": true,
     "type": "module",
-    "workspaces": [
-        "frontend",
-        "backend"
-    ],
     "version": "1.0.0",
-    "description": "An art project running application on a headless Raspberry Pi, utilizing a Python backend and a p5.js frontend. The application serves an interactive kiosk experience in the browser.",
+    "description": "Voice-controlled LLM embodiment system connecting a local/cloud LLM to physical devices over Serial, BLE, or WiFi. Python backend only; no frontend/kiosk UI.",
     "main": "index.js",
     "dependencies": {
         "acorn": "^8.14.1",
@@ -41,7 +37,7 @@
         "vite": "^6.3.5"
     },
     "scripts": {
-        "start": "./run_backend_python.sh",
+        "start": "python3 -m backend.server",
         "run": "./run.sh"
     },
     "keywords": [],

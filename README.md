@@ -1,34 +1,8 @@
 #  LLM_Embodiements
 
-This project makes it easy to connect physical devices to a large language model, for prototyping so called "Large Language Objects". The project is essentially a voice assistant optimised for running on a raspberry pi with an attached Arduino. The code has been tested on Linux and Mac OS, and is optimised for Raspbery PI. 
+This project makes it easy to connect physical devices to a large language model, for prototyping so called "Large Language Objects". The project is essentially a voice assistant optimised for running on a pc or server, with an arduino or similar device connecting via WiFi. The code has been tested on Linux and macOS. 
 
 ---
-
-## 🚀 Setting Up on a New Raspberry Pi
-
-### 1. **Prepare the SD Card**
-- Flash the latest Raspberry Pi OS (Desktop) to your SD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
-- **Enable SSH in imager**  
-
-### 2. **First Boot**
-- Insert the SD card into the Raspberry Pi and power it on.
-- Connect via SSH:  
-  ```bash
-  ssh <username>@<devicename>.local
-  ```
-  
-IMPORTANT: Enable Serial Interface
-
-  ```bash
-  sudo raspi-config
-  ```
-
-In config select "Interfacing Options" > "Serial". 
-
-"Would you like a login shell to be accessible over serial?" > NO
-"Would you like the serial port hardware to be enabled?" > Yes
-
-
 
 ### **Clone the Repository**
 ```bash
@@ -74,7 +48,6 @@ curl -fsSL https://ollama.com/install.sh | sh
 Install at least one model (pick one):
 
 ```bash
-# Good default for Raspberry Pi 5
 ollama pull llama3.2:3b
 
 # DeepSeek-R1-Distill
@@ -83,8 +56,9 @@ ollama pull deepseek-r1:1.5b
 # Qwen2 family
 ollama pull qwen2:7b
 ollama pull qwen2.5:3b
+ollama pull qwen3:14b
 
-# Lightweight tool-calling model (tested)
+# Lightweight tool-calling model 
 ollama pull hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M
 ```
 
@@ -100,17 +74,23 @@ url = "http://127.0.0.1:11434/api/chat"
 Tool-calling compatibility note:
 - The LiquidAI model above was verified against `/api/chat` with `tools` enabled.
 - It returns Ollama-native `message.tool_calls` entries (for example `set_LED` with `arguments.value = 1`).
-- This matches the current Python backend parser in `backend_python/llm_api.py`, so no adapter is needed.
+- This matches the current Python backend parser in `backend/llm_api.py`, so no adapter is needed.
+
+Suggested local models:
+- Raspberry Pi-class devices: `hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M` for lightweight tool calling.
+- Apple Silicon or PCs with 16 GB RAM: `qwen3:8b` for balanced conversation and tool calling; `lfm2.5:8b` for faster intent classification.
+- Apple Silicon or PCs with 32 GB RAM: `qwen3:14b` for stronger conversation and reliable tool calls.
+- Apple Silicon or PCs with 32 GB+ RAM, where response speed is less important: `qwen3.8:27b` for the strongest local conversations.
 
 To switch back to OpenAI, set `provider: "openai"`, a valid OpenAI model, and the OpenAI API URL.
 
 #### 2) Install STT models (Vosk)
 
-The repository already contains multiple Vosk models under `python/STTmodels/`.
+The repository already contains multiple Vosk models under `backend/STTmodels/`.
 If you want to add another one manually:
 
 ```bash
-cd python/STTmodels
+cd backend/STTmodels
 wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
 unzip vosk-model-small-en-us-0.15.zip
 rm vosk-model-small-en-us-0.15.zip
@@ -120,11 +100,11 @@ Set the STT model name in [config.toml](config.toml) under the active language p
 
 #### 3) Install TTS models (Piper)
 
-Place both `.onnx` and matching `.onnx.json` files in `python/TTSmodels/`.
+Place both `.onnx` and matching `.onnx.json` files in `backend/TTSmodels/`.
 Example (English voice):
 
 ```bash
-cd python/TTSmodels
+cd backend/TTSmodels
 wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
 ```
@@ -152,31 +132,12 @@ textToSpeechModel = "de_DE-thorsten-medium.onnx"
 
 Use model names directly (no numeric indexing).
 
-## Raspberry PI hallo Setup
-
-update the pi and reboot:
-```bash
-sudo apt update && sudo apt full-upgrade -y-y
-sudo rpi-eeprom-update -a
-sudo reboot
-```
-install hailo_
-```bash
-wget https://dev-public.hailo.ai/2025_12/Hailo10/hailo_gen_ai_model_zoo_5.1.1_arm64.deb
-sudo dpkg -i hailo_gen_ai_model_zoo_5.1.1_arm64.deb
-sudo reboot
-```
-
 ## Manual Setup
 
 ### 1. **Install Dependencies**
-- Update the system and install Python, Chromium, and system libraries:
+- Update the system and install Python and system libraries:
   ```bash
   sudo apt update && sudo apt upgrade -y
-  # For Raspberry Pi OS Bookworm (newer)
-  sudo apt install -y chromium git
-  # For Raspberry Pi OS Bullseye and earlier
-  sudo apt install -y chromium-browser git
   sudo apt-get install libusb-1.0-0-dev
   sudo apt install portaudio19-dev
   sudo apt install fswebcam
@@ -195,19 +156,19 @@ This project requires Python 3.13.3 (please do not use a newer Python version, u
 
 ```bash
 # create venv with Python 3.13.3
-python3.13 -m venv python/venv
-source python/venv/bin/activate
+python3.13 -m venv backend/venv
+source backend/venv/bin/activate
 
 # use the venv's python to install packages
 python -m pip install --upgrade pip wheel setuptools
 python -m pip install vosk numpy piper pyusb sounddevice requests
-python -m pip install --no-deps -r python/requirements.txt
+python -m pip install --no-deps -r backend/requirements.txt
 python -m pip install onnxruntime pyaudio webrtcvad
 ```
 
 Short notes on obtaining Python 3.13.3:
 
-- Debian/Ubuntu (including Raspberry Pi OS): use the deadsnakes PPA
+- Debian/Ubuntu: use the deadsnakes PPA
 
 ```bash
 sudo apt update
@@ -250,34 +211,31 @@ OPENAI_API_KEY='******************************'
 - Make sure python virtual environment is started:
 
 ```bash
-  source python/venv/bin/activate
+  source backend/venv/bin/activate
 ```
-- Start backend (serves UI and API on port 3000):
+- Start backend (API on port 3000):
 ```bash
-  ./run_backend_python.sh
+  python3 -m backend.server
 ```
-
-- The backend and UI are served on port 3000.
 
 ### Python Backend
 
 Run backend directly:
 
 ```bash
-./run_backend_python.sh
+python3 -m backend.server
 ```
 
 Notes:
-- `run_backend_python.sh` activates `python/venv` when present.
+- `run.sh` activates `backend/venv` when present and also runs this for you.
 - It also clears port 3000 before startup to prevent `address already in use` errors.
 
 Current Python backend scope:
 - Local/Web API LLM calls (Ollama/OpenAI) using `llmSettings`
 - STT/TTS worker orchestration via existing Python scripts
-- Serial communication with the same function-call flow
-- Frontend websocket protocol compatibility
+- Serial/BLE/WiFi communication with the same function-call flow
 
-### 5. **Set Up Kiosk Mode and autostart**
+### 5. **Run**
 
 ```bash
 chmod +x run.sh
@@ -297,29 +255,6 @@ chmod +x run.sh
 {"command":"sendMessage","message":"Hello from the terminal!"}
 ```
 
-###  AutoStart
-
-Add  /.config/autostart/llm-embodiments.desktop with the following content:
-
-```bash
-  [Desktop Entry]
-  Type=Application
-  Name=LLM_Embodiments
-  Comment=Start LLM_Embodiments Kiosk
-  Exec=/home/pi/LLM_Embodiments/run.sh
-  Path=/home/pi/LLM_Embodiments/
-  Icon=utilities-terminal
-  Terminal=false
-```
-
-### setup wifi WPA2 enterprise
-```bash
-   sudo nmcli connection add con-name "wlan-ZHDK" type wifi ifname wlan0 ssid "YOUR_SSID" wifi-sec.key-mgmt wpa-eap 802-1x.eap peap 802-1x.phase2-auth mschapv2 802-1x.identity "YOUR_USERNAME" 802-1x.password "YOUR_PASSWORD" ipv4.method auto connection.autoconnect yes
-  
-   sudo nmcli connection up "wlan-ZHDK"
-  
-   nmcli connection show
-```
 ###  Todo
 
 - Auto.restart when Arduino disconnected 

@@ -1,15 +1,31 @@
 # Single source of truth for runtime config. Loaded at startup via
-# Python's stdlib tomllib — no Node, no JS runtime on the Pi.
+# Python's stdlib tomllib —
 # Edit values below and restart the backend to apply.
 
 # Active language profile used for both STT and TTS.
 activeLanguage = "en"  # "en" or "de"
 
+# Full list of Vosk models can be found here: https://alphacephei.com/vosk/models
+# notifyTTS = true  # if enabled, send a notification to the Arduino
+# muteMicrophone = true  # optional to turn off microphone input permanently
+volume = 50  # 0 to 100
+
+communicationMethod = "WiFi"  # "Serial", "BLE", or "WiFi" (e.g. ArduinoExample/WiFi/M5StackExample)
+# serviceUuid = "19b10000-e8f2-537e-4f6c-d104768a1214"  # Only needed for BLE
+
+# Only used to document the device's own bootstrap settings when communicationMethod = "WiFi".
+# The device itself needs WiFi + backend URL before it can reach this file, so it keeps its own
+# copy (e.g. in Preferences/NVS); this table is reference only and not read by the device.
+# [deviceWifi]
+# ssid = "YourNetworkName"
+# password = "YourNetworkPassword"
+# backendUrl = "ws://192.168.1.10:3000/device"
+
 [speech]
 # Current implementation uses Vosk. "whisper" is reserved for future backend support.
 sttBackend = "vosk"  # "vosk" | "whisper"
 
-# Use explicit model names (no numeric indexes).
+# Use explicit model names for each language profile. Vosk models are downloaded to backend/STTmodels/ and TTS models to backend/TTSmodels/.  
 [speech.languageProfiles.en]
 speechToTextModel = "vosk-model-small-en-us-0.15"
 textToSpeechModel = "en_GB-alan-low.onnx"
@@ -18,21 +34,18 @@ textToSpeechModel = "en_GB-alan-low.onnx"
 speechToTextModel = "vosk-model-small-de-0.15"
 textToSpeechModel = "de_DE-thorsten-medium.onnx"
 
-# Full list of Vosk models can be found here: https://alphacephei.com/vosk/models
-# notifyTTS = true  # if enabled, send a notification to the Arduino
-# muteMicrophone = true  # optional to turn off microphone input permanently
-volume = 50  # 0 to 100
-
 [llmSettings]
+# Many of these settings are overridden by settings on the arduino device itself, which are sent to the backend via a `deviceInfo` message on connect.
 provider = "ollama"  # "ollama" for local model on this device, "openai" for cloud API
-temperature = 0.0  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
+temperature = 0.9  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "hf.co/alexwirrell/Qwen2-1.5B-Instruct-Function-Calling-v1-Q4_K_M-GGUF"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
+model = "qwen2:7b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
 # For DeepSeek-R1-Distill and Qwen2 support with Ollama, you can set:
 # model = "deepseek-r1:1.5b"   # lightweight DeepSeek-R1 distill option
 # model = "qwen2:7b"           # Qwen2 family option
 # model = "qwen2.5:3b"         # smaller Qwen for Pi-class devices
+# model = "qwen3:14b"          # Higher-end Qwen3 family (requires more RAM))
 # model = "katanemo/Arch-Function-3B"  # Arch-Function family (typically served via OpenAI-compatible endpoint)
 max_tokens = 4096  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
@@ -91,59 +104,9 @@ commandKeywords = [
   "stop",
 ]
 
-communicationMethod = "Serial"  # "Serial" or "BLE"
-# serviceUuid = "19b10000-e8f2-537e-4f6c-d104768a1214"  # Only needed for BLE
-
-# Unified tool list for novice users.
-# Edit this one list only.
-# The `target` field controls how a tool is handled:
-# - "device": serial/BLE/device call
-# - "frontEnd": UI call
-# - "notification": incoming notification metadata
-[functions.tools.set_LED]
-target = "device"
-commType = "write"
-dataType = "number"
-description = "0 is off, 1 is on"
-triggerKeywords = ["led", "light", "lamp"]
-valueRules = [
-  { keywords = ["off", "dark", "disable", "stop"], value = 0 },
-  { keywords = ["on", "bright", "enable", "start"], value = 1 },
-]
-
-[functions.tools.get_String]
-target = "device"
-commType = "read"
-dataType = "string"
-description = "Get the stored string from the device"
-triggerKeywords = ["string", "text", "status", "value", "read"]
-
-[functions.tools.set_motor_speed]
-target = "device"
-commType = "write"
-dataType = "number"
-description = "Sets the motor speed. 0 is off, 255 is full speed"
-triggerKeywords = ["motor", "speed"]
-
-[functions.tools.start_party]
-target = "frontEnd"
-dataType = "boolean"
-description = "0 is off, 1 is on. Creates a party effect in the GUI"
-
-[functions.tools.get_value]
-target = "frontEnd"
-dataType = "number"
-description = "Get a random value from front end"
-
-[functions.tools.shake]
-target = "notification"
-dataType = "boolean"
-description = "The device has been shaken! Get really mad at the user!"
-
-[functions.tools.press]
-target = "notification"
-dataType = "boolean"
-description = "The device button has been pressed. Immediately make up a song about pirates and sing to the user with lots of pirate words."
+# Tools are no longer defined here: a connected WiFi device (see ArduinoExample/WiFi/M5StackExample)
+# declares its own MCP-style tool list (name/description/dataType) via a `deviceInfo` message on
+# connect, registered live by FunctionHandler.register_device_tools() - see CLAUDE.md.
 
 # Assistant messages help store prior responses.
 [[conversationProtocol]]
