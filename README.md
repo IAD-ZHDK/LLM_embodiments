@@ -33,6 +33,17 @@ chmod +x run.sh
 ./run.sh
 ```
 
+### Windows
+
+Open PowerShell in the project folder and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\run.ps1
+```
+
+The setup script creates `backend\venv`, installs `backend\requirements.txt`, and checks for Ollama. Install Ollama separately from https://ollama.com/download/windows, then pull the configured model, for example `ollama pull qwen3:14b`.
+
 ### Model Installation (LLM + STT + TTS)
 
 This project supports local LLMs with Ollama, Vosk for speech-to-text, and Piper for text-to-speech.
@@ -62,7 +73,7 @@ ollama pull qwen3:14b
 ollama pull hf.co/LiquidAI/LFM2-1.2B-Tool-GGUF:Q4_K_M
 ```
 
-Set the model in `llmSettings.model` in [config.toml](config.toml), for example:
+Set the model in `llmSettings.model` i n [config.toml](config.toml), for example:
 
 ```toml
 [llmSettings]

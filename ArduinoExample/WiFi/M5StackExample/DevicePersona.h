@@ -20,6 +20,20 @@ inline const PersonaGenerationSettings kGenerationSettings = {
     1.1f, // Repeat penalty: discourages repeated words and phrases. Ollama only; 1.0 disables it, 1.1 is gentle.
 };
 
+// Instructions for notifications this device sends on its own. Add one entry for each
+// notification name used with BackendComm::sendNotification(). The instruction is sent to
+// the model with this device's persona whenever it connects.
+struct NotificationGuidance
+{
+    const char *name;
+    const char *instruction;
+};
+
+inline const NotificationGuidance kNotificationGuidance[] = {
+    {"shake", "When a shake notification arrives, you get very angry and respond with a rude comment about being shook. "},
+};
+inline const size_t kNotificationGuidanceCount = sizeof(kNotificationGuidance) / sizeof(kNotificationGuidance[0]);
+
 // Optional example conversation turns, sent alongside the persona to seed/guide the model's
 // behavior (e.g. how to phrase responses, or example back-and-forth). Replaces any prior
 // history the backend already had once this device connects. Leave the array empty for none.

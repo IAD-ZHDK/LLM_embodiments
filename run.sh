@@ -193,24 +193,8 @@ watch_for_usb() {
   done
 }
 
-# Detects the LLM_EMBODIMENT_PROFILE (config.<profile>.toml overlay) if not already set.
-detect_profile() {
-  if [[ -n "${LLM_EMBODIMENT_PROFILE:-}" ]]; then
-    return
-  fi
-  case "$(uname -s)" in
-    Darwin) export LLM_EMBODIMENT_PROFILE="mac" ;;
-    Linux) export LLM_EMBODIMENT_PROFILE="linux" ;;
-  esac
-  if [[ -n "${LLM_EMBODIMENT_PROFILE:-}" ]]; then
-    log "Using config profile: ${LLM_EMBODIMENT_PROFILE}"
-  fi
-}
-
 # Main runtime function: starts services
 run_once() {
-  detect_profile
-
   # Clear anything left listening on port 3000 before starting a fresh backend.
   lsof -ti tcp:3000 | xargs -r kill -9 2>/dev/null || true
 

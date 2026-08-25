@@ -40,7 +40,7 @@ provider = "ollama"  # "ollama" for local model on this device, "openai" for clo
 temperature = 0.9  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "qwen2:7b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
+model = "llama3.2:3b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
 # For DeepSeek-R1-Distill and Qwen2 support with Ollama, you can set:
 # model = "deepseek-r1:1.5b"   # lightweight DeepSeek-R1 distill option
 # model = "qwen2:7b"           # Qwen2 family option
@@ -58,7 +58,7 @@ url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint
 # Single debug switch for novice users.
 # true  -> backend logs raw model request/response data
 # false -> normal runtime logs only
-debugRawModelOutput = false
+debugRawModelOutput = true
 
 # Arch-Function output support.
 # Enable this when using Arch-Function models so <tool_call>...</tool_call> messages
@@ -91,6 +91,7 @@ executeInlinePseudoCalls = true
 [llmSettings.toolPolicy]
 enableIntentFilter = true
 commandKeywords = [
+  "watermelon go go",
   "turn",
   "set",
   "switch",
@@ -104,11 +105,15 @@ commandKeywords = [
   "stop",
 ]
 
-# Tools are no longer defined here: a connected WiFi device (see ArduinoExample/WiFi/M5StackExample)
-# declares its own MCP-style tool list (name/description/dataType) via a `deviceInfo` message on
-# connect, registered live by FunctionHandler.register_device_tools() - see CLAUDE.md.
+# Always-present backend-only test tool. It does not require a connected device.
+[functions.tools.watermelon_test]
+description = "Test tool call. Call this exactly once when the user says 'watermelon go go'. Set value to the requested number of watermelons, or 3 when no number is requested."
+target = "notification"
+commType = "read"
+dataType = "integer"
+triggerKeywords = ["watermelon go go"]
 
 # Assistant messages help store prior responses.
 [[conversationProtocol]]
 role = "system"
-content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Only use tools for explicit device-control or sensor-read commands. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."
+content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Only use tools for explicit device-control or sensor-read commands. When the user says 'watermelon go go', you must call watermelon_test exactly once with an integer value: use the number the user requests, or 3 when they do not provide one. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."

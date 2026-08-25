@@ -5,6 +5,8 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -70,6 +72,24 @@ class LLMAPI:
         if len(text) > limit:
             text = text[:limit] + "... [truncated]"
         print(f"🔎 LLM DEBUG {label}: {text}")
+
+    def _protocol_trace(self, event: str, value: Any) -> None:
+        if not self._debug_enabled():
+            return
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "provider": self.provider,
+            "model": self.config.get("llmSettings", {}).get("model", self.model),
+            "data": value,
+        }
+        try:
+            log_path = Path(__file__).resolve().parent.parent / "logs" / "llm_protocol.jsonl"
+            log_path.parent.mkdir(exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        except Exception as exc:
+            print(f"⚠️ Could not write LLM protocol trace: {exc}")
 
     @staticmethod
     def _run_command(command: List[str]) -> Optional[subprocess.CompletedProcess]:
@@ -339,6 +359,42 @@ class LLMAPI:
         return normalized
 
     @staticmethod
+    def _tool_result_content(result: Dict[str, Any]) -> str:
+        payload = {
+            key: value
+            for key, value in result.items()
+            if key in {"message", "value", "description", "arguments"}
+        }
+        return json.dumps(payload, ensure_ascii=True)
+
+    def _execute_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a tool and retain the complete exchange for the next model turn."""
+        result = self.function_handler.handle_call(name, args)
+        self._protocol_trace("tool_execution", {"name": name, "arguments": args, "result": result})
+        history = self.config.setdefault("conversationProtocol", [])
+        content = self._tool_result_content(result)
+
+        if self.provider in ("ollama", "local"):
+            history.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                }],
+            })
+            history.append({"role": "tool", "tool_name": name, "content": content})
+        else:
+            history.append({
+                "role": "assistant",
+                "content": "",
+                "function_call": {"name": name, "arguments": json.dumps(args)},
+            })
+            history.append({"role": "function", "name": name, "content": content})
+
+        return result
+
+    @staticmethod
     def _request_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
         return response.json()
@@ -470,6 +526,7 @@ class LLMAPI:
 
         if self._debug_enabled():
             self._debug_log("request.payload", payload)
+            self._protocol_trace("request", payload)
 
         try:
             data = self._request_json(self.url, headers, payload)
@@ -478,6 +535,7 @@ class LLMAPI:
 
         if self._debug_enabled():
             self._debug_log("response.raw", data)
+            self._protocol_trace("response", data)
 
         if isinstance(data, dict) and data.get("error"):
             err = data["error"]
@@ -491,6 +549,10 @@ class LLMAPI:
                 "response.tool_fields",
                 {"openai_function_call": openai_fc, "ollama_tool_calls": ollama_tc},
             )
+            self._protocol_trace(
+                "tool_fields",
+                {"openai_function_call": openai_fc, "ollama_tool_calls": ollama_tc},
+            )
 
         blocked_tool_attempt = False
 
@@ -500,9 +562,11 @@ class LLMAPI:
                 args = json.loads(openai_fc.get("arguments", "{}"))
             except Exception:
                 args = {}
-            if self._allow_tool_call(role, text, name):
+            allowed = self._allow_tool_call(role, text, name)
+            self._protocol_trace("tool_decision", {"name": name, "arguments": args, "allowed": allowed})
+            if allowed:
                 args = self._normalize_tool_args(name, args, text)
-                return self.function_handler.handle_call(name, args)
+                return self._execute_tool_call(name, args)
             blocked_tool_attempt = True
 
         if ollama_tc:
@@ -515,9 +579,11 @@ class LLMAPI:
                         raw_args = json.loads(raw_args)
                     except Exception:
                         raw_args = {}
-                if self._allow_tool_call(role, text, name):
+                allowed = self._allow_tool_call(role, text, name)
+                self._protocol_trace("tool_decision", {"name": name, "arguments": raw_args, "allowed": allowed})
+                if allowed:
                     raw_args = self._normalize_tool_args(name, raw_args or {}, text)
-                    return self.function_handler.handle_call(name, raw_args)
+                    return self._execute_tool_call(name, raw_args)
                 blocked_tool_attempt = True
 
         message = self._extract_message_text(data) if isinstance(data, dict) else ""
@@ -528,7 +594,7 @@ class LLMAPI:
             args = arch_call.get("arguments", {})
             if self._allow_tool_call(role, text, name):
                 args = self._normalize_tool_args(name, args, text)
-                return self.function_handler.handle_call(name, args)
+                return self._execute_tool_call(name, args)
             blocked_tool_attempt = True
 
         fenced_call = self._extract_fenced_json_tool_call(message)
@@ -542,7 +608,7 @@ class LLMAPI:
                 resolved_name = self._resolve_tool_alias(str(raw_name), args if isinstance(args, dict) else {})
                 if resolved_name and self._allow_tool_call(role, text, resolved_name):
                     norm_args = self._normalize_tool_args(resolved_name, args if isinstance(args, dict) else {}, text)
-                    return self.function_handler.handle_call(resolved_name, norm_args)
+                    return self._execute_tool_call(resolved_name, norm_args)
                 blocked_tool_attempt = True
 
         message = self._strip_arch_markup(message)
@@ -558,6 +624,8 @@ class LLMAPI:
                 else:
                     fallback_payload = self._build_openai_request(messages, include_functions=False)
                 fallback_data = self._request_json(self.url, headers, fallback_payload)
+                self._protocol_trace("fallback_request", fallback_payload)
+                self._protocol_trace("fallback_response", fallback_data)
                 if isinstance(fallback_data, dict):
                     message = self._extract_message_text(fallback_data)
             except Exception:

@@ -272,6 +272,15 @@ async def _frontend_function(function_name: str, args: Any) -> None:
     await _broadcast({"backEnd": {"functionName": function_name, "arguments": args}})
 
 
+def _show_watermelons(args: Any) -> str:
+    try:
+        count = int(args.get("value", 3)) if isinstance(args, dict) else 3
+    except (TypeError, ValueError):
+        count = 3
+    count = max(0, min(count, 20))
+    return f"Watermelon test ({count}): {'🍉' * count}"
+
+
 async def _handle_llm_response(return_object: Dict[str, Any]) -> None:
     role = return_object.get("role")
     message_preview = str(return_object.get("message", ""))[:160].replace("\n", " ")
@@ -312,6 +321,12 @@ async def _handle_llm_response(return_object: Dict[str, Any]) -> None:
             return
 
         await _update_frontend(value, "system")
+        return
+
+    if role == "notification" and return_object.get("function_name") == "watermelon_test":
+        watermelons = _show_watermelons(return_object.get("arguments", {}))
+        print(f"🍉 {watermelons}")
+        await _update_frontend(watermelons, "system")
         return
 
     if role in ("error", "system", "notification"):
@@ -447,6 +462,27 @@ def _apply_device_info(device_info: Dict[str, Any]) -> None:
                 new_protocol.append({"role": role, "content": content})
         state.config["conversationProtocol"] = new_protocol
         print(f"📜 Device conversation history installed ({len(new_protocol) - (1 if system_msg else 0)} turn(s))")
+
+    notification_guidance = device_info.get("notificationGuidance")
+    if isinstance(notification_guidance, list):
+        instructions: List[str] = []
+        for entry in notification_guidance:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name", "")).strip()
+            instruction = str(entry.get("instruction", "")).strip()
+            if name and instruction:
+                instructions.append(f"- Notification `{name}`: {instruction}")
+        if instructions:
+            protocol = state.config.setdefault("conversationProtocol", [])
+            system_msg = next((message for message in protocol if message.get("role") == "system"), None)
+            if system_msg is not None:
+                system_msg["content"] = (
+                    f"{str(system_msg.get('content', '')).rstrip()}\n\n"
+                    "Device notification instructions:\n"
+                    + "\n".join(instructions)
+                )
+                print(f"🔔 Device notification guidance installed ({len(instructions)} rule(s))")
 
     generation = device_info.get("generation")
     if isinstance(generation, dict):

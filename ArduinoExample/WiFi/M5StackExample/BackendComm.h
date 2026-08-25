@@ -70,6 +70,13 @@ namespace BackendComm
         generation["top_k"] = kGenerationSettings.topK;
         generation["max_tokens"] = kGenerationSettings.maxTokens;
         generation["repeat_penalty"] = kGenerationSettings.repeatPenalty;
+        JsonArray notifications = doc["deviceInfo"]["notificationGuidance"].to<JsonArray>();
+        for (size_t i = 0; i < kNotificationGuidanceCount; i++)
+        {
+            JsonObject notification = notifications.add<JsonObject>();
+            notification["name"] = kNotificationGuidance[i].name;
+            notification["instruction"] = kNotificationGuidance[i].instruction;
+        }
         JsonArray tools = doc["deviceInfo"]["tools"].to<JsonArray>();
         for (size_t i = 0; i < deviceToolCount; i++)
         {
@@ -77,6 +84,7 @@ namespace BackendComm
             tool["name"] = deviceTools[i].name;
             tool["description"] = deviceTools[i].description;
             tool["dataType"] = deviceTools[i].dataType;
+            tool["commType"] = deviceTools[i].commType;
         }
         JsonArray history = doc["deviceInfo"]["history"].to<JsonArray>();
         for (size_t i = 0; i < kPersonaHistoryCount; i++)

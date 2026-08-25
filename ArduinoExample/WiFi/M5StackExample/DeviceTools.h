@@ -4,13 +4,14 @@
 
 // One entry per function the model can call on this device — MCP-style: a name, a natural
 // language description of what it does (shown to the model so it knows when/how to call it),
-// a dataType ("bool" | "int" | "float" | "string" | "none", matching config.toml's convention),
-// and the handler function to run when the backend sends a matching toolCall.
+// a dataType ("bool" | "int" | "float" | "string" | "none"), a communication type
+// ("write" for commands and "read" for queries), and the handler function to run.
 struct DeviceTool
 {
     const char *name;
     const char *description;
     const char *dataType;
+    const char *commType;
     void (*handler)(const String &value);
 };
 

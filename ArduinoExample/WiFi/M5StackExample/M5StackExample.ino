@@ -16,6 +16,8 @@
 // --- Device state ---
 bool vibrationOn = false;
 String storedString = "hello from the M5Stack";
+unsigned long yellowCircleUntil = 0;
+bool yellowCircleShown = false;
 
 // --- Tool handlers: called when the model asks this device to do something ---
 void set_vibration(const String &value)
@@ -35,11 +37,18 @@ void set_String(const String &value)
     storedString = value;
 }
 
+void show_yellow_circle(const String &value)
+{
+    yellowCircleUntil = millis() + 5000;
+    yellowCircleShown = false;
+}
+
 // --- Tools available to the model (MCP-style: name, description, dataType, handler) ---
 DeviceTool deviceTools[] = {
-    {"set_vibration", "Turns the vibration motor on or off. value=1 turns it on, value=0 turns it off.", "bool", set_vibration},
-    {"get_String", "Reads back the string currently stored on the device.", "none", get_String},
-    {"set_String", "Stores a new string value on the device for later retrieval.", "string", set_String},
+    {"set_vibration", "Turns the vibration motor on or off. value=1 turns it on, value=0 turns it off.", "bool", "write", set_vibration},
+    {"get_String", "Reads back the string currently stored on the device.", "none", "read", get_String},
+    {"set_String", "Stores a new string value on the device for later retrieval.", "string", "write", set_String},
+    {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle},
 };
 const size_t deviceToolCount = sizeof(deviceTools) / sizeof(deviceTools[0]);
 
@@ -60,7 +69,7 @@ void checkShake()
     unsigned long now = millis();
     if (now - lastDebugMillis >= 500) // throttled so it's readable, not flooding the console
     {
-        // Serial.printf("[IMU] accel x=%.3f y=%.3f z=%.3f\n", imu.accel.x, imu.accel.y, imu.accel.z);
+       // Serial.printf("[IMU] accel x=%.3f y=%.3f z=%.3f\n", imu.accel.x, imu.accel.y, imu.accel.z);
         lastDebugMillis = now;
     }
 
@@ -70,6 +79,7 @@ void checkShake()
 
     if (shaking && now - lastShakeMillis >= 2000) // only allow notifications at most every 2 seconds
     {
+        Serial.printf("[IMU] Shake");
         BackendComm::sendNotification("shake", "true");
         lastShakeMillis = now;
     }
@@ -84,4 +94,18 @@ void loop()
 {
     BackendComm::loop();
     checkShake();
+
+    if (yellowCircleUntil && !yellowCircleShown)
+    {
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.fillCircle(M5.Lcd.width() / 2, M5.Lcd.height() / 2, min(M5.Lcd.width(), M5.Lcd.height()) / 3, YELLOW);
+        yellowCircleShown = true;
+    }
+    else if (yellowCircleUntil && millis() >= yellowCircleUntil)
+    {
+        yellowCircleUntil = 0;
+        yellowCircleShown = false;
+        redrawDisplay();
+        drawMicLevelBar();
+    }
 }

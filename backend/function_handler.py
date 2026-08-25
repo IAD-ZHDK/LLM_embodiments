@@ -65,6 +65,13 @@ class FunctionHandler:
 
     def _format_and_add_functions(self, source: Any, target: List[Dict[str, Any]], default_target: str) -> None:
         for name, item in self._iter_function_items(source):
+            data_type = str(item.get("dataType", "string"))
+            properties = {}
+            if data_type != "none":
+                properties["value"] = {
+                    "type": data_type,
+                    "description": item.get("description", ""),
+                }
             fn = {
                 "name": name,
                 "description": item.get("description", ""),
@@ -73,12 +80,7 @@ class FunctionHandler:
                 "deviceCommand": item.get("deviceCommand", name),
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "value": {
-                            "type": item.get("dataType", "string"),
-                            "description": item.get("description", ""),
-                        }
-                    },
+                    "properties": properties,
                 },
             }
 
@@ -120,8 +122,10 @@ class FunctionHandler:
             fn = self._function_index.get(function_name, {})
             return {
                 "role": "notification",
+                "function_name": function_name,
                 "message": f"notification received: {function_name}",
                 "description": str(fn.get("description", "")),
+                "arguments": function_arguments,
             }
 
         func_def = self._function_index.get(function_name)

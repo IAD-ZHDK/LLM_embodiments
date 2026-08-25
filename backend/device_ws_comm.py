@@ -87,11 +87,18 @@ class DeviceWebSocketCommunication:
             self._pending_read(update_object)
             return
 
+        if not name:
+            return
+
         notifications = self.config.get("functions", {}).get("notifications", {})
-        notify_object = notifications.get(name)
-        if notify_object:
-            payload = {"description": name, "value": value, "type": notify_object.get("dataType", "string")}
-            self.callback(json.dumps(payload))
+        notify_object = notifications.get(name, {})
+        payload = {
+            "description": name,
+            "value": value,
+            "type": notify_object.get("dataType", "string") if isinstance(notify_object, dict) else "string",
+        }
+        print(f"🔔 Device notification: {name} = {value}")
+        self.callback(json.dumps(payload))
 
     def _send_json(self, payload: Dict[str, Any]) -> bool:
         # write()/read() run on a worker thread, so the send is bridged onto the asyncio loop and awaited synchronously.
