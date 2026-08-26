@@ -258,9 +258,6 @@ class LLMAPI:
             or ""
         )
 
-    def _tool_policy(self) -> Dict[str, Any]:
-        return self.config.get("llmSettings", {}).get("toolPolicy", {})
-
     @staticmethod
     def _function_catalog(config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
@@ -284,45 +281,6 @@ class LLMAPI:
     def _contains_any(text: str, keywords: List[str]) -> bool:
         lowered = text.lower()
         return any(isinstance(k, str) and k.strip() and k.lower() in lowered for k in keywords)
-
-    @staticmethod
-    def _derive_keywords(tool_name: str, meta: Dict[str, Any]) -> List[str]:
-        words = re.split(r"[^a-zA-Z0-9]+", tool_name)
-        derived = [w.lower() for w in words if len(w) >= 3]
-        desc = str(meta.get("description", ""))
-        desc_words = re.split(r"[^a-zA-Z0-9]+", desc)
-        for w in desc_words:
-            lw = w.lower()
-            if len(lw) >= 4 and lw not in derived:
-                derived.append(lw)
-        return derived[:16]
-
-    def _tool_keywords(self, tool_name: str) -> List[str]:
-        catalog = self._function_catalog(self.config)
-        meta = catalog.get(tool_name, {})
-        config_keywords = meta.get("triggerKeywords", []) if isinstance(meta, dict) else []
-        if isinstance(config_keywords, list) and config_keywords:
-            return [str(k).lower() for k in config_keywords if str(k).strip()]
-
-        return self._derive_keywords(tool_name, meta if isinstance(meta, dict) else {})
-
-    def _is_command_like(self, text: str) -> bool:
-        policy = self._tool_policy()
-        command_keywords = policy.get("commandKeywords", []) if isinstance(policy, dict) else []
-        if not isinstance(command_keywords, list) or not command_keywords:
-            return True
-        return self._contains_any(text, [str(k) for k in command_keywords])
-
-    def _allow_tool_call(self, role: str, text: str, tool_name: str) -> bool:
-        policy = self._tool_policy()
-        enabled = bool(policy.get("enableIntentFilter", False)) if isinstance(policy, dict) else False
-        if not enabled:
-            return role == "user"
-        if role != "user":
-            return False
-        if not self._is_command_like(text):
-            return False
-        return self._contains_any(text, self._tool_keywords(tool_name))
 
     def _normalize_tool_args(self, tool_name: str, args: Dict[str, Any], text: str) -> Dict[str, Any]:
         normalized = dict(args or {})
@@ -392,7 +350,60 @@ class LLMAPI:
             })
             history.append({"role": "function", "name": name, "content": content})
 
+        result = dict(result)
+        result["toolCall"] = {"name": name, "arguments": args}
+
+        reply = self._reply_after_tool()
+        if reply:
+            history.append({"role": "assistant", "content": reply})
+            result["spokenReply"] = reply
+
         return result
+
+    def _build_headers(self) -> tuple[Dict[str, str], Optional[str]]:
+        headers: Dict[str, str] = {"Accept": "application/json", "Content-Type": "application/json"}
+        if self.provider in ("ollama", "local"):
+            return headers, None
+
+        api_key = self.config.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        settings = self.config.get("llmSettings", {}) if isinstance(self.config, dict) else {}
+        require_key = bool(settings.get("requireApiKey", str(self.url).startswith("https://api.openai.com")))
+        if require_key and not api_key:
+            return headers, "OpenAI API key not found"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers, None
+
+    def _reply_after_tool(self) -> str:
+        """Second half of the tool-calling loop: the model sees its own tool result and answers in
+        character. Sent without tools so it produces speech instead of chaining another call."""
+        headers, error = self._build_headers()
+        if error:
+            return ""
+
+        messages = list(self.config.get("conversationProtocol", []))
+        if self._is_arch_function_mode():
+            messages = self._apply_arch_system_prompt(messages)
+
+        if self.provider in ("ollama", "local"):
+            payload = self._build_ollama_request(messages, include_tools=False)
+        else:
+            payload = self._build_openai_request(messages, include_functions=False)
+
+        try:
+            self._protocol_trace("tool_reply_request", payload)
+            data = self._request_json(self.url, headers, payload)
+            self._protocol_trace("tool_reply_response", data)
+        except Exception:
+            return ""
+
+        if not isinstance(data, dict) or data.get("error"):
+            return ""
+
+        message = self._strip_arch_markup(self._extract_message_text(data))
+        if message and (self._extract_arch_tool_call(message) or self._extract_fenced_json_tool_call(message)):
+            return ""
+        return message
 
     @staticmethod
     def _request_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -510,19 +521,14 @@ class LLMAPI:
             return {"role": "assistant", "message": ""}
 
         messages = self._build_messages(text, role, function_name)
-        headers: Dict[str, str] = {"Accept": "application/json", "Content-Type": "application/json"}
+        headers, header_error = self._build_headers()
+        if header_error:
+            return {"role": "error", "message": header_error}
 
         if self.provider in ("ollama", "local"):
             payload = self._build_ollama_request(messages)
         else:
             payload = self._build_openai_request(messages)
-            api_key = self.config.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-            settings = self.config.get("llmSettings", {}) if isinstance(self.config, dict) else {}
-            require_key = bool(settings.get("requireApiKey", str(self.url).startswith("https://api.openai.com")))
-            if require_key and not api_key:
-                return {"role": "error", "message": "OpenAI API key not found"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
 
         if self._debug_enabled():
             self._debug_log("request.payload", payload)
@@ -562,12 +568,8 @@ class LLMAPI:
                 args = json.loads(openai_fc.get("arguments", "{}"))
             except Exception:
                 args = {}
-            allowed = self._allow_tool_call(role, text, name)
-            self._protocol_trace("tool_decision", {"name": name, "arguments": args, "allowed": allowed})
-            if allowed:
-                args = self._normalize_tool_args(name, args, text)
-                return self._execute_tool_call(name, args)
-            blocked_tool_attempt = True
+            args = self._normalize_tool_args(name, args, text)
+            return self._execute_tool_call(name, args)
 
         if ollama_tc:
             first = ollama_tc[0].get("function", {})
@@ -579,23 +581,16 @@ class LLMAPI:
                         raw_args = json.loads(raw_args)
                     except Exception:
                         raw_args = {}
-                allowed = self._allow_tool_call(role, text, name)
-                self._protocol_trace("tool_decision", {"name": name, "arguments": raw_args, "allowed": allowed})
-                if allowed:
-                    raw_args = self._normalize_tool_args(name, raw_args or {}, text)
-                    return self._execute_tool_call(name, raw_args)
-                blocked_tool_attempt = True
+                raw_args = self._normalize_tool_args(name, raw_args or {}, text)
+                return self._execute_tool_call(name, raw_args)
 
         message = self._extract_message_text(data) if isinstance(data, dict) else ""
 
         arch_call = self._extract_arch_tool_call(message)
         if arch_call:
             name = arch_call["name"]
-            args = arch_call.get("arguments", {})
-            if self._allow_tool_call(role, text, name):
-                args = self._normalize_tool_args(name, args, text)
-                return self._execute_tool_call(name, args)
-            blocked_tool_attempt = True
+            args = self._normalize_tool_args(name, arch_call.get("arguments", {}), text)
+            return self._execute_tool_call(name, args)
 
         fenced_call = self._extract_fenced_json_tool_call(message)
         if fenced_call:
@@ -606,7 +601,7 @@ class LLMAPI:
                 raw_name = fenced_call.get("name", "")
                 args = fenced_call.get("arguments", {})
                 resolved_name = self._resolve_tool_alias(str(raw_name), args if isinstance(args, dict) else {})
-                if resolved_name and self._allow_tool_call(role, text, resolved_name):
+                if resolved_name:
                     norm_args = self._normalize_tool_args(resolved_name, args if isinstance(args, dict) else {}, text)
                     return self._execute_tool_call(resolved_name, norm_args)
                 blocked_tool_attempt = True
@@ -633,10 +628,7 @@ class LLMAPI:
 
         # Last-resort cleanup for small models that keep emitting pseudo tool-call JSON.
         if message and (self._extract_arch_tool_call(message) or self._extract_fenced_json_tool_call(message)):
-            if role == "user" and not self._is_command_like(text):
-                message = "Yeah. What do you want?"
-            else:
-                message = ""
+            message = ""
 
         self.config.setdefault("conversationProtocol", []).append({"role": "assistant", "content": message})
         return {"role": "assistant", "message": message}

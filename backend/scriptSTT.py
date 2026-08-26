@@ -9,6 +9,7 @@ import numpy as np
 import time
 import threading
 from Microphone.scriptMicrophone import MicrophoneStream
+from Microphone.vad_utils import VAD
 import importlib.util
 
 # Check if vosk is installed
@@ -29,6 +30,22 @@ else:
             print(f"Model downloader not available. Please download model manually to {os.path.join(model_path, model_name)}", file=sys.stderr)
             return False
 
+# Check if faster-whisper is installed
+whisper_available = importlib.util.find_spec("faster_whisper") is not None
+if whisper_available:
+    from faster_whisper import WhisperModel
+else:
+    print("faster-whisper not found. Install it with: pip install faster-whisper", file=sys.stderr)
+
+
+def _cuda_available() -> bool:
+    """Best-effort GPU probe for the "auto" whisper device setting."""
+    try:
+        import ctranslate2
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        return False
+
 # Constants
 DEVICE_INDEX = 0  # Update this to match speaker device index
 RATE = 16000      # Sample rate
@@ -41,6 +58,10 @@ MODEL_EN_LARGE = "vosk-model-en-us-0.22-lgraph"       # Large English model
 MODEL_DE_SMALL = "vosk-model-small-de-0.15"    # German model
 current_model = 0  # Default model index
 stt_backend = "vosk"
+whisper_device = "auto"
+whisper_compute_type = "auto"
+whisper_device_index = 0
+whisper_language = "auto"
 # Global variables for communication
 _recognizer = None
 _recognizer_ready = threading.Event()
@@ -240,6 +261,127 @@ class SpeechRecognizer:
         self.running = False
         print("Recognizer stopped.", file=sys.stderr)
 
+
+class WhisperRecognizer:
+    """Speech recognition using faster-whisper (CTranslate2).
+
+    Unlike Vosk, Whisper is not a streaming recognizer: it transcribes a full utterance at once.
+    This class uses the same WebRTC VAD helper as the microphone modules to detect when speech
+    starts/stops, buffers audio while the user is speaking, and transcribes once a short silence
+    follows. Each instance loads its own model, so a future version that runs one worker per GPU
+    (via device_index) can simply start multiple SpeechToTextWorker subprocesses side by side.
+    """
+
+    def __init__(
+        self,
+        audio_source,
+        callback=None,
+        rate=RATE,
+        chunk=CHUNK,
+        modelName="small",
+        device="auto",
+        compute_type="auto",
+        language="auto",
+        device_index=0,
+        silence_hangover=0.6,
+    ):
+        self.callback = callback or self.default_callback
+        self.audio_source = audio_source
+        self.RATE = rate
+        self.CHUNK = chunk
+        self.running = False
+        self.PAUSE = False
+        self.silence_hangover = silence_hangover
+        self.language = None if str(language).lower() in ("auto", "", "none") else str(language)
+
+        resolved_device = device if device != "auto" else ("cuda" if _cuda_available() else "cpu")
+        resolved_compute_type = compute_type
+        if resolved_compute_type == "auto":
+            resolved_compute_type = "float16" if resolved_device == "cuda" else "int8"
+
+        self.model = None
+        print(
+            f"Loading Whisper model '{modelName}' (device={resolved_device}, index={device_index}, "
+            f"compute_type={resolved_compute_type})...",
+            file=sys.stderr,
+        )
+        try:
+            self.model = WhisperModel(
+                modelName,
+                device=resolved_device,
+                device_index=device_index,
+                compute_type=resolved_compute_type,
+            )
+            print(f"✅ Whisper recognizer initialized with {modelName}", file=sys.stderr)
+        except Exception as e:
+            print(f"❌ Error initializing Whisper recognizer: {e}", file=sys.stderr)
+
+        self.vad = VAD(aggressiveness=2, sampling_rate=rate, frame_duration_ms=30)
+        self._speech_buffer = bytearray()
+        self._silence_since = None
+        self._speaking = False
+
+    def default_callback(self, text, partial):
+        if text:
+            print(f"Final Text: {text}", file=sys.stderr)
+
+    def _transcribe_buffer(self):
+        buffered, self._speech_buffer = self._speech_buffer, bytearray()
+        if not self.model or not buffered:
+            return
+        audio_np = np.frombuffer(bytes(buffered), dtype=np.int16).astype(np.float32) / 32768.0
+        try:
+            segments, _info = self.model.transcribe(audio_np, language=self.language, beam_size=1, vad_filter=False)
+            text = " ".join(segment.text.strip() for segment in segments).strip()
+        except Exception as e:
+            print(f"Whisper transcription error: {e}", file=sys.stderr)
+            text = ""
+        if text:
+            self.callback(text, None)
+
+    def run(self):
+        self.running = True
+        print("\nSpeak now (Whisper)...", file=sys.stderr)
+
+        while self.running:
+            try:
+                data = self.audio_source.read(self.CHUNK)
+            except OSError as e:
+                print(f"Audio input overflow: {e}", file=sys.stderr)
+                data = b'\x00' * self.CHUNK
+
+            if self.PAUSE:
+                self._speech_buffer = bytearray()
+                self._speaking = False
+                self._silence_since = None
+                continue
+
+            is_speech = self.vad.process(data)
+            now = time.time()
+            if is_speech:
+                self._speech_buffer.extend(data)
+                self._silence_since = None
+                self._speaking = True
+            elif self._speaking:
+                if self._silence_since is None:
+                    self._silence_since = now
+                elif now - self._silence_since >= self.silence_hangover:
+                    self._transcribe_buffer()
+                    self._speaking = False
+                    self._silence_since = None
+
+    def pause(self):
+        self.PAUSE = True
+        print(f"Recognizer paused, Time: {time.time()}", file=sys.stderr)
+
+    def resume(self):
+        self.PAUSE = False
+        print(f"Recognizer resumed, Time: {time.time()}", file=sys.stderr)
+
+    def stop(self):
+        self.running = False
+        print("Recognizer stopped.", file=sys.stderr)
+
 # Helper function to detect sound levels
 def detect_sound(audio_chunk, threshold=THRESHOLD):
     """Return True if audio chunk above volume threshold."""
@@ -320,7 +462,20 @@ def setUpSpeechToText():
     mic = MicrophoneStream(rate=RATE, chunk=CHUNK)
 
     # Initialize recognizer
-    _recognizer = SpeechRecognizer(audio_source=mic, size="medium", callback=STTCallBack, rate=RATE, chunk=CHUNK)
+    if stt_backend == "whisper":
+        _recognizer = WhisperRecognizer(
+            audio_source=mic,
+            callback=STTCallBack,
+            rate=RATE,
+            chunk=CHUNK,
+            modelName=str(current_model),
+            device=whisper_device,
+            compute_type=whisper_compute_type,
+            language=whisper_language,
+            device_index=whisper_device_index,
+        )
+    else:
+        _recognizer = SpeechRecognizer(audio_source=mic, size="medium", callback=STTCallBack, rate=RATE, chunk=CHUNK)
     _recognizer_ready.set()
     threading.Thread(target=_recognizer.run, daemon=True).start()
 
@@ -349,6 +504,14 @@ def parse_arguments():
                        help='STT backend to use')
     parser.add_argument('--model', default=0,
                        help='Initial STT model to use (int: 0-3 for presets, or string: model name)')
+    parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'],
+                       help='Whisper only: compute device')
+    parser.add_argument('--compute-type', default='auto', choices=['auto', 'int8', 'float16', 'float32'],
+                       help='Whisper only: CTranslate2 compute type')
+    parser.add_argument('--device-index', type=int, default=0,
+                       help='Whisper only: GPU index to use when device resolves to cuda')
+    parser.add_argument('--language', default='auto',
+                       help='Whisper only: force a language (e.g. "en", "de") or "auto" to detect')
     # Convert to int if it's a digit string, otherwise keep as string
     args = parser.parse_args()
     try:
@@ -362,17 +525,24 @@ def main():
     try:
         global current_model
         global stt_backend
+        global whisper_device, whisper_compute_type, whisper_device_index, whisper_language
         args = parse_arguments()
         stt_backend = args.backend
         current_model = args.model
-        if stt_backend == 'whisper':
-            print("⚠️ Whisper backend is not implemented yet in this script. Falling back to Vosk.", file=sys.stderr)
+        whisper_device = args.device
+        whisper_compute_type = args.compute_type
+        whisper_device_index = args.device_index
+        whisper_language = args.language
+
+        if stt_backend == 'whisper' and not whisper_available:
+            print("❌ faster-whisper is required for the whisper backend but is not installed. "
+                  "Install with: pip install faster-whisper. Falling back to Vosk.", file=sys.stderr)
             stt_backend = 'vosk'
 
         print("\n🎤 Current STT Model:", current_model, file=sys.stderr)
         
-        # Check if VOSK is available before starting
-        if not vosk_available:
+        # Vosk is only required when it's the active backend.
+        if stt_backend == 'vosk' and not vosk_available:
             print("❌ Vosk is required but not installed. Please install with: pip install vosk", file=sys.stderr)
             send_message("error", "Vosk is not installed", None)
             return

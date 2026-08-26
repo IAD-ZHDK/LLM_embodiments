@@ -34,6 +34,7 @@ inline void addRemoteTool(const String &name, const String &deviceCommand, const
 struct DisplayState
 {
     String wifiStatus = "WiFi: connecting...";
+    String wifiIP = "";
     String wsStatus = "Server: disconnected";
     String wsTarget = "";
     String micStatus = "Mic: live";
@@ -57,6 +58,7 @@ inline void redrawDisplay()
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.setTextColor(WHITE);
     M5.Lcd.println(displayState.wifiStatus);
+    M5.Lcd.println(displayState.wifiIP);
     M5.Lcd.println(displayState.wsStatus);
     M5.Lcd.println(displayState.wsTarget);
     M5.Lcd.println(displayState.micStatus);

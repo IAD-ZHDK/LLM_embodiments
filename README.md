@@ -95,7 +95,26 @@ Suggested local models:
 
 To switch back to OpenAI, set `provider: "openai"`, a valid OpenAI model, and the OpenAI API URL.
 
-#### 2) Install STT models (Vosk)
+#### 2) Install STT models (Vosk or Whisper)
+
+Two STT backends are supported, set via `speech.sttBackend` in [config.toml](config.toml):
+
+- `"vosk"` (default) - lightweight, CPU-only, streams partial results as you speak.
+- `"whisper"` - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2). More accurate, supports
+  CUDA GPUs, and is the better choice if you plan to run on multiple graphics cards or (in a future version) run
+  several simultaneous transcription sessions in parallel, since each session loads its own model instance and can
+  be pinned to its own GPU via `speech.whisper.deviceIndex`. It has no streaming partials: it transcribes each
+  utterance shortly after you stop speaking, using the same voice-activity detection as the Vosk path.
+
+Install whichever backend(s) you plan to use:
+
+```bash
+# Vosk (already a default dependency)
+python -m pip install vosk
+
+# Whisper
+python -m pip install faster-whisper
+```
 
 The repository already contains multiple Vosk models under `backend/STTmodels/`.
 If you want to add another one manually:
@@ -107,7 +126,16 @@ unzip vosk-model-small-en-us-0.15.zip
 rm vosk-model-small-en-us-0.15.zip
 ```
 
-Set the STT model name in [config.toml](config.toml) under the active language profile (folder name, not a number).
+Whisper models are downloaded automatically by faster-whisper on first use (no manual step needed). Suggested
+models, set as `speechToTextModel` in [config.toml](config.toml):
+
+- English only, fastest/smallest: `tiny.en`, `base.en`, `small.en`, `medium.en`
+- Multilingual (needed for German, or English + German with a single model): `tiny`, `base`, `small`, `medium`, `large-v3`
+- Raspberry Pi / CPU-only: `tiny` or `tiny.en`
+- Single consumer GPU (~6-8 GB VRAM): `small` or `medium`
+- Higher-end GPU (~10 GB+ VRAM): `large-v3` for the best accuracy
+
+Set the STT model name in [config.toml](config.toml) under the active language profile (folder name for Vosk, model name for Whisper).
 
 #### 3) Install TTS models (Piper)
 
@@ -130,7 +158,7 @@ To switch language for STT and TTS together, change `activeLanguage` in [config.
 activeLanguage = "en"  # or "de"
 
 [speech]
-sttBackend = "vosk"
+sttBackend = "vosk"  # or "whisper"
 
 [speech.languageProfiles.en]
 speechToTextModel = "vosk-model-small-en-us-0.15"

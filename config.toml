@@ -13,6 +13,15 @@ volume = 50  # 0 to 100
 communicationMethod = "WiFi"  # "Serial", "BLE", or "WiFi" (e.g. ArduinoExample/WiFi/M5StackExample)
 # serviceUuid = "19b10000-e8f2-537e-4f6c-d104768a1214"  # Only needed for BLE
 
+# Only used when communicationMethod = "WiFi". Each connected device gets its own tools,
+# conversation history, and STT session, so they don't interfere with each other.
+maxDeviceSessions = 10
+
+# TTS is off by default while multi-device support is new: there is currently one shared audio
+# output on this machine, which doesn't map cleanly onto several simultaneously connected devices.
+# A future version may stream synthesized speech back to a specific device's own speaker instead.
+ttsEnabled = false
+
 # Only used to document the device's own bootstrap settings when communicationMethod = "WiFi".
 # The device itself needs WiFi + backend URL before it can reach this file, so it keeps its own
 # copy (e.g. in Preferences/NVS); this table is reference only and not read by the device.
@@ -22,16 +31,36 @@ communicationMethod = "WiFi"  # "Serial", "BLE", or "WiFi" (e.g. ArduinoExample/
 # backendUrl = "ws://192.168.1.10:3000/device"
 
 [speech]
-# Current implementation uses Vosk. "whisper" is reserved for future backend support.
-sttBackend = "vosk"  # "vosk" | "whisper"
+# "vosk" - lightweight, CPU-only, streaming partial results. Good default for Raspberry Pi-class devices.
+# "whisper" - faster-whisper (CTranslate2). More accurate, supports CUDA GPUs, better for multiple GPUs
+# and (in a future version) multiple simultaneous transcription sessions. No streaming partials; it
+# transcribes each utterance after a short pause using the same voice-activity detection as "vosk".
+sttBackend = "whisper"  # "vosk" | "whisper"
 
-# Use explicit model names for each language profile. Vosk models are downloaded to backend/STTmodels/ and TTS models to backend/TTSmodels/.  
+# Only used when sttBackend = "whisper". Ignored otherwise.
+[speech.whisper]
+device = "auto"       # "auto" | "cpu" | "cuda" - "auto" picks a GPU if one is detected, else CPU
+deviceIndex = 0        # Which GPU to use when device resolves to "cuda" (e.g. 1 for a second card).
+# Set this per instance/session once multiple simultaneous transcriptions across several GPUs are supported.
+computeType = "auto"  # "auto" | "int8" | "float16" | "float32" - "auto" picks float16 on GPU, int8 on CPU
+language = "auto"      # "auto" detects the spoken language; set "en" or "de" to skip detection and speed things up
+
+# Use explicit model names for each language profile. Vosk models are downloaded to backend/STTmodels/;
+# Whisper models are downloaded automatically by faster-whisper on first use and cached locally.
+#
+# Suggested Whisper models (used only when sttBackend = "whisper"):
+# - English only, fastest/smallest: "tiny.en", "base.en", "small.en", "medium.en"
+# - Multilingual (needed for German, or for English + German with one model): "tiny", "base", "small",
+#   "medium", "large-v3". There is no German-only Whisper model, so German requires a multilingual one.
+# - Raspberry Pi / CPU-only: "tiny" or "tiny.en" - anything larger will be too slow without a GPU.
+# - Single consumer GPU (~6-8 GB VRAM): "small" or "medium" for a good accuracy/speed balance.
+# - Higher-end GPU (~10 GB+ VRAM): "large-v3" for the best accuracy.
 [speech.languageProfiles.en]
-speechToTextModel = "vosk-model-small-en-us-0.15"
+speechToTextModel = "small.en"  # Whisper model name (sttBackend = "whisper"); use "vosk-model-small-en-us-0.15" for sttBackend = "vosk"
 textToSpeechModel = "en_GB-alan-low.onnx"
 
 [speech.languageProfiles.de]
-speechToTextModel = "vosk-model-small-de-0.15"
+speechToTextModel = "small"  # Whisper model name (multilingual, sttBackend = "whisper"); use "vosk-model-small-de-0.15" for sttBackend = "vosk"
 textToSpeechModel = "de_DE-thorsten-medium.onnx"
 
 [llmSettings]
@@ -86,34 +115,14 @@ stripPseudoToolCalls = true
 # Safety: only known configured functions are eligible.
 executeInlinePseudoCalls = true
 
-# Global routing policy only.
-# Keep per-tool settings inside functions.tools to avoid duplicate configuration.
-[llmSettings.toolPolicy]
-enableIntentFilter = true
-commandKeywords = [
-  "watermelon go go",
-  "turn",
-  "set",
-  "switch",
-  "enable",
-  "disable",
-  "increase",
-  "decrease",
-  "read",
-  "get",
-  "start",
-  "stop",
-]
-
 # Always-present backend-only test tool. It does not require a connected device.
 [functions.tools.watermelon_test]
 description = "Test tool call. Call this exactly once when the user says 'watermelon go go'. Set value to the requested number of watermelons, or 3 when no number is requested."
 target = "notification"
 commType = "read"
 dataType = "integer"
-triggerKeywords = ["watermelon go go"]
 
 # Assistant messages help store prior responses.
 [[conversationProtocol]]
 role = "system"
-content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Only use tools for explicit device-control or sensor-read commands. When the user says 'watermelon go go', you must call watermelon_test exactly once with an integer value: use the number the user requests, or 3 when they do not provide one. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."
+content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Use the provided tools whenever they fit the situation — either because the user asked, or because your own character calls for it. When the user says 'watermelon go go', you must call watermelon_test exactly once with an integer value: use the number the user requests, or 3 when they do not provide one. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."

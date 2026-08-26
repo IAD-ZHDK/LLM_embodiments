@@ -15,13 +15,26 @@ class SpeechToTextWorker:
         model_name: str,
         backend: str = "vosk",
         source: str = "local",
+        device: str = "auto",
+        compute_type: str = "auto",
+        device_index: int = 0,
+        language: str = "auto",
     ):
         self.callback = callback
         self.source = source
+        stt_args = ["--backend", backend, "--model", str(model_name)]
+        if backend == "whisper":
+            # Only meaningful for the faster-whisper backend; ignored by the Vosk path.
+            stt_args += [
+                "--device", str(device),
+                "--compute-type", str(compute_type),
+                "--device-index", str(device_index),
+                "--language", str(language),
+            ]
         if source == "remote":
             # Binary stdin carries length-prefixed audio/control frames (see scriptRemoteSTT.py); stdout stays text.
             self.proc = subprocess.Popen(
-                ["python3", "scriptRemoteSTT.py", "--model", str(model_name)],
+                ["python3", "scriptRemoteSTT.py", *stt_args],
                 cwd=str(repo_root / "backend"),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -30,7 +43,7 @@ class SpeechToTextWorker:
             )
         else:
             self.proc = subprocess.Popen(
-                ["python3", "scriptSTT.py", "--backend", backend, "--model", str(model_name)],
+                ["python3", "scriptSTT.py", *stt_args],
                 cwd=str(repo_root / "backend"),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,

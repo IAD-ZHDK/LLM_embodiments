@@ -8,8 +8,16 @@ from typing import Any, Dict
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "activeLanguage": "en",
+    "maxDeviceSessions": 10,
+    "ttsEnabled": False,
     "speech": {
         "sttBackend": "vosk",
+        "whisper": {
+            "device": "auto",       # "auto" | "cpu" | "cuda"
+            "deviceIndex": 0,       # GPU index when device resolves to "cuda"; lets each future parallel session pin its own GPU
+            "computeType": "auto",  # "auto" | "int8" | "float16" | "float32"
+            "language": "auto",    # "auto" | "en" | "de" - forcing a language skips detection and is faster
+        },
         "languageProfiles": {
             "en": {
                 "speechToTextModel": "vosk-model-small-en-us-0.15",
@@ -38,10 +46,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "preferWhenAvailable": True,
             "provider": "openai",
             "url": "",
-        },
-        "toolPolicy": {
-            "enableIntentFilter": False,
-            "commandKeywords": [],
         },
     },
     "functions": {"tools": {}},

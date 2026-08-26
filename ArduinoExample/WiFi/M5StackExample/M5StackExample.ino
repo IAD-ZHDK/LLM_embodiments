@@ -46,8 +46,8 @@ void show_yellow_circle(const String &value)
 // --- Tools available to the model (MCP-style: name, description, dataType, handler) ---
 DeviceTool deviceTools[] = {
     {"set_vibration", "Turns the vibration motor on or off. value=1 turns it on, value=0 turns it off.", "bool", "write", set_vibration},
-    {"get_String", "Reads back the string currently stored on the device.", "none", "read", get_String},
-    {"set_String", "Stores a new string value on the device for later retrieval.", "string", "write", set_String},
+    {"get_String", "Reads back the note previously saved with set_String. Only call this when asked what is stored on the device.", "none", "read", get_String},
+    {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String},
     {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle},
 };
 const size_t deviceToolCount = sizeof(deviceTools) / sizeof(deviceTools[0]);
@@ -69,7 +69,7 @@ void checkShake()
     unsigned long now = millis();
     if (now - lastDebugMillis >= 500) // throttled so it's readable, not flooding the console
     {
-       // Serial.printf("[IMU] accel x=%.3f y=%.3f z=%.3f\n", imu.accel.x, imu.accel.y, imu.accel.z);
+        // Serial.printf("[IMU] accel x=%.3f y=%.3f z=%.3f\n", imu.accel.x, imu.accel.y, imu.accel.z);
         lastDebugMillis = now;
     }
 

@@ -1,5 +1,6 @@
 pyaudio 
 vosk 
+faster-whisper 
 sounddevice 
 numpy 
 piper-tts
@@ -7,6 +8,7 @@ pyusb
 requests
 onnxruntime 
 webrtcvad
+setuptools<81  # webrtcvad imports pkg_resources at startup; newer setuptools no longer bundles it
 fastapi
 uvicorn
 pyserial

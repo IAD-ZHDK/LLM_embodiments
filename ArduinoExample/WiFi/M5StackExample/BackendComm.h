@@ -7,7 +7,9 @@
 #include <Preferences.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
+#include "esp_timer.h"
 
 #include "DeviceConfig.h"
 #include "DevicePersona.h"
@@ -27,6 +29,7 @@ namespace BackendComm
     static bool micMuted = false;
     static bool serverConnected = false;
     static bool webSocketStarted = false;
+    static bool mdnsStarted = false;
     static unsigned long nextWifiRetryAt = 0;
 
     static String wifiSsid;
@@ -34,6 +37,60 @@ namespace BackendComm
     static String backendHost;
     static uint16_t backendPort;
     static String backendPath;
+
+    // --- Analog microphone fallback, used only when M5.Mic reports no built-in mic (e.g. a bare
+    // AtomS3, which has no PDM mic - unlike Core2). Wire an amplified electret mic module (such as
+    // MAX9814 or MAX4466), biased to ~1.65V, to kAnalogMicPin. G8 is the pin to use on AtomS3: it is
+    // ADC1-capable, unlike G38/G39 which are the Grove I2C pins and have no ADC on ESP32-S3.
+    //
+    // analogRead() takes roughly 100us on ESP32-S3, so it cannot keep up with a 16kHz (62us) period -
+    // doing so previously starved the CPU and tripped the task watchdog. Instead this samples at a
+    // sustainable 4kHz and duplicates each sample 4x so the emitted chunk still spans the same real
+    // time as a true 16kHz chunk; this trades audio bandwidth for stability, which is an acceptable
+    // trade for a low-fidelity fallback mic.
+    static const int kAnalogMicPin = 8;
+    static const uint32_t kAnalogMicSampleRate = 4000;
+    static const size_t kAnalogMicUpsampleFactor = kSampleRate / kAnalogMicSampleRate;
+    static bool useAnalogMic = false;
+    static esp_timer_handle_t analogMicTimer = nullptr;
+    static int16_t analogMicBuffer[kAudioChunkSamples];
+    static volatile size_t analogMicWriteIndex = 0;
+    static volatile bool analogMicBufferReady = false;
+
+    static void _analogMicSample(void *)
+    {
+        int raw = analogRead(kAnalogMicPin); // 0-4095 (12-bit)
+        int16_t sample = (int16_t)((raw - 2048) * 16);
+        for (size_t i = 0; i < kAnalogMicUpsampleFactor && analogMicWriteIndex < kAudioChunkSamples; i++)
+        {
+            analogMicBuffer[analogMicWriteIndex++] = sample;
+        }
+        if (analogMicWriteIndex >= kAudioChunkSamples)
+        {
+            analogMicWriteIndex = 0;
+            analogMicBufferReady = true;
+        }
+    }
+
+    // Starts the analog mic timer once WiFi/WebSocket are up; safe to call repeatedly (e.g. from
+    // the WiFi retry path) since it is a no-op once the timer already exists.
+    inline void _startAnalogMic()
+    {
+        if (!useAnalogMic || analogMicTimer != nullptr)
+            return;
+        analogReadResolution(12);
+        pinMode(kAnalogMicPin, INPUT);
+        const esp_timer_create_args_t timerArgs = {
+            .callback = &_analogMicSample,
+            .arg = nullptr,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "analog_mic",
+        };
+        esp_timer_create(&timerArgs, &analogMicTimer);
+        esp_timer_start_periodic(analogMicTimer, 1000000ULL / kAnalogMicSampleRate);
+        Serial.printf("[Mic] No built-in mic detected; sampling analog mic on pin G%d at %luHz.\n",
+                      kAnalogMicPin, (unsigned long)kAnalogMicSampleRate);
+    }
 
     inline void sendNotification(const String &name, const String &value)
     {
@@ -186,13 +243,32 @@ namespace BackendComm
         preferences.end();
     }
 
+    // Enables resolving a "<name>.local" backendHost (e.g. a Mac's Bonjour hostname) so the
+    // backend's IP can change - e.g. after a restart or DHCP renewal - without reconfiguring this
+    // device. Only matters if kFallbackBackendHost/backendHost ends in ".local"; a plain IP works
+    // as before. The service name given here is arbitrary and unused by this device.
+    inline void _startMDNS()
+    {
+        if (mdnsStarted)
+            return;
+        if (MDNS.begin("m5stack-client"))
+        {
+            mdnsStarted = true;
+            Serial.println("[mDNS] Started; .local backend hostnames can now be resolved.");
+        }
+        else
+        {
+            Serial.println("[mDNS] Failed to start; .local backend hostnames will not resolve.");
+        }
+    }
+
     inline void _connectWifi()
     {
         displayState.wifiStatus = "WiFi: connecting...";
         redrawDisplay();
         WiFi.mode(WIFI_STA);
 
-        const unsigned long kConnectionTimeoutMs = 10000;
+        const unsigned long kConnectionTimeoutMs = 20000;
         bool hasSavedCredentials = !wifiSsid.isEmpty();
         size_t credentialCount = DeviceConfig::kWifiCredentialCount + (hasSavedCredentials ? 1 : 0);
         Serial.printf("[WiFi] Starting connection: %u credential set(s), timeout %lums.\n",
@@ -228,7 +304,10 @@ namespace BackendComm
             {
                 wifiSsid = ssid;
                 wifiPassword = password;
-                displayState.wifiStatus = "WiFi: " + WiFi.localIP().toString();
+                displayState.wifiStatus = "WiFi: " + wifiSsid;
+                displayState.wifiIP = "IP: " + WiFi.localIP().toString();
+                _startMDNS();
+
                 Serial.printf("\n[WiFi] Connected after %lums.\n", millis() - startedAt);
                 Serial.printf("[WiFi] IP: %s, gateway: %s, RSSI: %d dBm.\n",
                               WiFi.localIP().toString().c_str(),
@@ -265,8 +344,17 @@ namespace BackendComm
         if (micMuted || !serverConnected)
             return;
 
-        if (!M5.Mic.record(audioBuffer, kAudioChunkSamples, kSampleRate))
+        if (useAnalogMic)
+        {
+            if (!analogMicBufferReady)
+                return;
+            analogMicBufferReady = false;
+            memcpy(audioBuffer, analogMicBuffer, sizeof(audioBuffer));
+        }
+        else if (!M5.Mic.record(audioBuffer, kAudioChunkSamples, kSampleRate))
+        {
             return;
+        }
 
         long sumSquares = 0;
         for (size_t i = 0; i < kAudioChunkSamples; i++)
@@ -308,6 +396,7 @@ namespace BackendComm
         auto cfg = M5.config();
         M5.begin(cfg);
         M5.Mic.begin();
+        useAnalogMic = !M5.Mic.isEnabled();
         bool imuFound = M5.Imu.begin();
         Serial.printf("[IMU] begin() -> %s, type=%d (0 = imu_none: no IMU detected on this board)\n",
                       imuFound ? "OK" : "FAILED", static_cast<int>(M5.Imu.getType()));
@@ -317,7 +406,10 @@ namespace BackendComm
         Serial.printf("[Config] Target backend: ws://%s:%u%s\n", backendHost.c_str(), backendPort, backendPath.c_str());
         _connectWifi();
         if (WiFi.status() == WL_CONNECTED)
+        {
             _startWebSocket();
+            _startAnalogMic();
+        }
         else
             nextWifiRetryAt = millis() + 10000;
 
@@ -337,12 +429,16 @@ namespace BackendComm
                 _connectWifi();
                 nextWifiRetryAt = millis() + 10000;
                 if (WiFi.status() == WL_CONNECTED)
+                {
                     _startWebSocket();
+                    _startAnalogMic();
+                }
             }
             return;
         }
 
         _startWebSocket();
+        _startAnalogMic();
         webSocket.loop();
         _streamMicAudio();
     }
