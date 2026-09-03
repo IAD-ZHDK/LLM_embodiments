@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -34,7 +35,7 @@ class SpeechToTextWorker:
         if source == "remote":
             # Binary stdin carries length-prefixed audio/control frames (see scriptRemoteSTT.py); stdout stays text.
             self.proc = subprocess.Popen(
-                ["python3", "scriptRemoteSTT.py", *stt_args],
+                [sys.executable, "scriptRemoteSTT.py", *stt_args],
                 cwd=str(repo_root / "backend"),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -43,7 +44,7 @@ class SpeechToTextWorker:
             )
         else:
             self.proc = subprocess.Popen(
-                ["python3", "scriptSTT.py", *stt_args],
+                [sys.executable, "scriptSTT.py", *stt_args],
                 cwd=str(repo_root / "backend"),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -117,7 +118,7 @@ class TextToSpeechWorker:
     def __init__(self, repo_root: Path, callback: Callable[[Dict[str, Any]], None]):
         self.callback = callback
         self.proc = subprocess.Popen(
-            ["python3", "scriptTTS.py"],
+            [sys.executable, "scriptTTS.py"],
             cwd=str(repo_root / "backend"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
