@@ -1,5 +1,6 @@
 import sys
 import json
+import base64
 import numpy as np
 import sounddevice as sd
 from piper.voice import PiperVoice
@@ -45,9 +46,11 @@ pause_event = threading.Event()
 voice_cache = {}
 output_device = None
 
-def send_message(name, string):
+def send_message(name, value, request_id=""):
     """Send JSON message to stdout"""
-    msg = {f"{name}": f"{string}"}
+    msg = {name: value}
+    if request_id:
+        msg["requestId"] = request_id
     print(json.dumps(msg))
     sys.stdout.flush()
 
@@ -93,6 +96,24 @@ def extract_audio_from_chunk(audio_chunk):
                 return value.tobytes() if hasattr(value, 'tobytes') else value
     
     return None
+
+def stream_to_device(voice, text, request_id):
+    """Emit Piper's mono signed-16-bit PCM in small frames for the backend WebSocket relay."""
+    try:
+        sample_rate = int(voice.config.sample_rate)
+        send_message("tts", "started", request_id)
+        send_message("audioStart", {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}, request_id)
+        for chunk in voice.synthesize(text):
+            audio = extract_audio_from_chunk(chunk)
+            if not audio:
+                continue
+            for offset in range(0, len(audio), 4096):
+                encoded = base64.b64encode(audio[offset:offset + 4096]).decode("ascii")
+                send_message("audio", encoded, request_id)
+        send_message("audioEnd", True, request_id)
+    except Exception as e:
+        print(f"TTS device-stream error: {e}", file=sys.stderr)
+        send_message("tts", f"error: {e}", request_id)
 
 def get_supported_sample_rate(device=None):
     """Find a supported sample rate for the device"""
@@ -462,6 +483,8 @@ def main():
             # Handle TTS request
             text = msg.get("text", "") if isinstance(msg, dict) else line
             raw_model = msg.get("model", MODEL_NAMES[0]) if isinstance(msg, dict) else MODEL_NAMES[0]
+            output = msg.get("output", "local") if isinstance(msg, dict) else "local"
+            request_id = msg.get("requestId", "") if isinstance(msg, dict) else ""
             model_name = resolve_tts_model_name(raw_model)
 
             if not text or not model_name:
@@ -483,10 +506,9 @@ def main():
             
             stop_event = threading.Event()
             pause_event.clear()
-            playback_thread = threading.Thread(
-                target=play_stream, 
-                args=(voice, text, stop_event, pause_event, output_device)
-            )
+            target = stream_to_device if output == "device" else play_stream
+            args = (voice, text, request_id) if output == "device" else (voice, text, stop_event, pause_event, output_device)
+            playback_thread = threading.Thread(target=target, args=args)
             playback_thread.start()
             
             

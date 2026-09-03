@@ -148,9 +148,9 @@ class TextToSpeechWorker:
             if line.strip():
                 print(f"[TTS] {line.strip()}")
 
-    def say(self, text: str, model: str, volume: int) -> None:
+    def say(self, text: str, model: str, volume: int, output: str = "local", request_id: str = "") -> None:
         self._send({"volume": int(volume)})
-        self._send({"text": text, "model": model})
+        self._send({"text": text, "model": model, "output": output, "requestId": request_id})
 
     def pause(self) -> None:
         self._send({"tts": "pause"})

@@ -21,23 +21,92 @@ namespace BackendComm
     // Audio streaming settings (must match RATE in backend/scriptRemoteSTT.py)
     static const uint32_t kSampleRate = 16000;
     static const size_t kAudioChunkSamples = 512; // ~32ms per chunk at 16kHz
+    static const size_t kDeviceAudioChunkSamples = 2048;
+    static const uint8_t kDeviceAudioChannel = 1;
+    static const uint8_t kDeviceAudioVolume = 255;
+    static const uint8_t kToneChannel = 0;
+    static const uint8_t kToneVolume = 36;
     static int16_t audioBuffer[kAudioChunkSamples];
+    static int16_t deviceAudioBuffers[3][kDeviceAudioChunkSamples];
+    static uint8_t deviceAudioBufferIndex = 0;
 
     static Preferences preferences;
     static WebSocketsClient webSocket;
 
     static bool micMuted = false;
+    static bool deviceSpeaking = false;
+    static bool audioStreamEnded = false;
+    static bool useAnalogMic = false;
     static bool serverConnected = false;
     static bool webSocketStarted = false;
     static bool mdnsStarted = false;
     static unsigned long nextWifiRetryAt = 0;
     static unsigned long micResumeAt = 0;
+    static unsigned long audioPlaybackEndsAt = 0;
+    static uint32_t playbackSampleRate = kSampleRate;
+    static int16_t toneBuffer[8000];
 
     static String wifiSsid;
     static String wifiPassword;
     static String backendHost;
     static uint16_t backendPort;
     static String backendPath;
+
+    inline void _configureBuiltInMic();
+
+    inline void _updateMicStatus()
+    {
+        displayState.micStatus = micMuted ? "Mic: muted" : (deviceSpeaking ? "Mic: speaking" : "Mic: live");
+    }
+
+    inline void _sendAudioFinished()
+    {
+        JsonDocument doc;
+        doc["audio"] = "finished";
+        String payload;
+        serializeJson(doc, payload);
+        webSocket.sendTXT(payload);
+    }
+
+    inline void _finishDeviceSpeech()
+    {
+        if (!deviceSpeaking)
+            return;
+        M5.Speaker.end();
+        if (!useAnalogMic)
+        {
+            M5.Mic.begin();
+            if (M5.Mic.isEnabled())
+                _configureBuiltInMic();
+        }
+        deviceSpeaking = false;
+        audioStreamEnded = false;
+        _updateMicStatus();
+        displayState.micLevel = 0;
+        _sendAudioFinished();
+        redrawDisplay();
+        drawMicLevelBar();
+    }
+
+    inline void _playDeviceAudio(uint8_t *payload, size_t length)
+    {
+        if (!deviceSpeaking || length < sizeof(int16_t))
+            return;
+        const size_t samples = length / sizeof(int16_t);
+        if (samples > kDeviceAudioChunkSamples)
+            return;
+
+        // M5Unified queues two buffers. Keep three owned buffers and wait for a free slot so
+        // WebSocket payload memory cannot be reused while the I2S task is still reading it.
+        while (M5.Speaker.isPlaying(kDeviceAudioChannel) >= 2)
+            M5.delay(1);
+        int16_t *buffer = deviceAudioBuffers[deviceAudioBufferIndex];
+        memcpy(buffer, payload, samples * sizeof(int16_t));
+        deviceAudioBufferIndex = (deviceAudioBufferIndex + 1) % 3;
+        M5.Speaker.playRaw(buffer, samples, playbackSampleRate, false, 1, kDeviceAudioChannel);
+        unsigned long durationMs = (samples * 1000UL + playbackSampleRate - 1) / playbackSampleRate;
+        audioPlaybackEndsAt = max(audioPlaybackEndsAt, millis()) + durationMs;
+    }
 
     // --- Analog microphone fallback, used only when M5.Mic reports no built-in mic (e.g. a bare
     // AtomS3, which has no PDM mic - unlike Core2). Wire an amplified electret mic module (such as
@@ -52,7 +121,6 @@ namespace BackendComm
     static const int kAnalogMicPin = 8;
     static const uint32_t kAnalogMicSampleRate = 4000;
     static const size_t kAnalogMicUpsampleFactor = kSampleRate / kAnalogMicSampleRate;
-    static bool useAnalogMic = false;
     static esp_timer_handle_t analogMicTimer = nullptr;
     static int16_t analogMicBuffer[kAudioChunkSamples];
     static volatile size_t analogMicWriteIndex = 0;
@@ -110,8 +178,14 @@ namespace BackendComm
             M5.Mic.end();
         }
         M5.Speaker.begin();
-        M5.Speaker.tone(frequency, durationMs);
-        Serial.printf("[Speaker] Tone %luHz for %lums.\n", (unsigned long)frequency, (unsigned long)durationMs);
+        M5.Speaker.setVolume(180);
+        M5.Speaker.setChannelVolume(kToneChannel, kToneVolume);
+        uint32_t clampedFrequency = constrain(frequency, 60UL, 4000UL);
+        size_t samples = min(static_cast<size_t>((durationMs * kSampleRate) / 1000UL), sizeof(toneBuffer) / sizeof(toneBuffer[0]));
+        for (size_t index = 0; index < samples; index++)
+            toneBuffer[index] = static_cast<int16_t>(sinf(2.0f * PI * clampedFrequency * index / kSampleRate) * 32767.0f);
+        M5.Speaker.playRaw(toneBuffer, samples, kSampleRate, false, 1, kToneChannel, true);
+        Serial.printf("[Speaker] Sine tone %luHz for %lums.\n", (unsigned long)clampedFrequency, (unsigned long)durationMs);
         micResumeAt = millis() + durationMs + 50;
     }
 
@@ -234,6 +308,34 @@ namespace BackendComm
             JsonObjectConst toolCall = doc["toolCall"].as<JsonObjectConst>();
             _handleToolCall(toolCall["name"].as<String>(), toolCall["value"].as<String>());
         }
+        else if (doc["assistantResponse"].is<const char *>())
+        {
+            displayState.lastDebug = "AI: " + doc["assistantResponse"].as<String>();
+            redrawDisplay();
+        }
+        else if (doc["audioStart"].is<JsonObject>())
+        {
+            playbackSampleRate = doc["audioStart"]["sampleRate"] | kSampleRate;
+            deviceSpeaking = true;
+            audioStreamEnded = false;
+            audioPlaybackEndsAt = millis();
+            displayState.micLevel = 0;
+            _updateMicStatus();
+            if (!useAnalogMic && M5.Mic.isEnabled())
+            {
+                while (M5.Mic.isRecording())
+                    M5.delay(1);
+                M5.Mic.end();
+            }
+            M5.Speaker.begin();
+            M5.Speaker.setVolume(180);
+            M5.Speaker.setChannelVolume(kDeviceAudioChannel, kDeviceAudioVolume);
+            redrawDisplay();
+        }
+        else if (doc["audioEnd"].is<bool>() && doc["audioEnd"].as<bool>())
+        {
+            audioStreamEnded = true;
+        }
         else if (doc["debug"].is<const char *>())
         {
             displayState.lastDebug = doc["debug"].as<String>();
@@ -263,6 +365,9 @@ namespace BackendComm
             break;
         case WStype_TEXT:
             _onWebSocketText(payload, length);
+            break;
+        case WStype_BIN:
+            _playDeviceAudio(payload, length);
             break;
         default:
             break;
@@ -378,7 +483,7 @@ namespace BackendComm
 
     inline void _streamMicAudio()
     {
-        if (micMuted || !serverConnected)
+        if (micMuted || deviceSpeaking || !serverConnected)
             return;
 
         if (useAnalogMic)
@@ -415,7 +520,7 @@ namespace BackendComm
     inline void _toggleMicMute()
     {
         micMuted = !micMuted;
-        displayState.micStatus = micMuted ? "Mic: muted" : "Mic: live";
+        _updateMicStatus();
         displayState.micLevel = 0;
         _sendMicState();
         redrawDisplay();
@@ -478,6 +583,8 @@ namespace BackendComm
     {
         _checkMuteControl();
         _restoreMicAfterTone();
+        if (deviceSpeaking && audioStreamEnded && audioPlaybackEndsAt != 0 && millis() >= audioPlaybackEndsAt)
+            _finishDeviceSpeech();
         if (WiFi.status() != WL_CONNECTED)
         {
             if (millis() >= nextWifiRetryAt)

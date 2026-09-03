@@ -80,6 +80,28 @@ class DeviceWebSocketCommunication:
         self.connected = False
         self.ws = None
 
+    def send_response(self, message: str) -> bool:
+        """Display an assistant reply on this WiFi device."""
+        return self._send_json({"assistantResponse": message})
+
+    def send_audio_start(self, sample_rate: int) -> bool:
+        return self._send_json({"audioStart": {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}})
+
+    def send_audio(self, audio: bytes) -> bool:
+        if not self.ws:
+            return False
+        future = self._submit_coro(self.ws.send_bytes(audio))
+        if future is None:
+            return False
+        try:
+            future.result(timeout=3)
+            return True
+        except Exception:
+            return False
+
+    def send_audio_end(self) -> bool:
+        return self._send_json({"audioEnd": True})
+
     def receive(self, name: str, value: str) -> None:
         update_object = {"description": name, "value": value}
 

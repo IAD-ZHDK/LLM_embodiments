@@ -22,6 +22,10 @@ maxDeviceSessions = 10
 # A future version may stream synthesized speech back to a specific device's own speaker instead.
 ttsEnabled = false
 
+# WiFi-device output. These work without local computer audio playback.
+deviceResponseDisplay = true
+deviceTtsEnabled = true
+
 # Only used to document the device's own bootstrap settings when communicationMethod = "WiFi".
 # The device itself needs WiFi + backend URL before it can reach this file, so it keeps its own
 # copy (e.g. in Preferences/NVS); this table is reference only and not read by the device.
@@ -69,13 +73,7 @@ provider = "ollama"  # "ollama" for local model on this device, "openai" for clo
 temperature = 0.9  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "llama3.2:3b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:mini
-# For DeepSeek-R1-Distill and Qwen2 support with Ollama, you can set:
-# model = "deepseek-r1:1.5b"   # lightweight DeepSeek-R1 distill option
-# model = "qwen2:7b"           # Qwen2 family option
-# model = "qwen2.5:3b"         # smaller Qwen for Pi-class devices
-# model = "qwen3:14b"          # Higher-end Qwen3 family (requires more RAM))
-# model = "katanemo/Arch-Function-3B"  # Arch-Function family (typically served via OpenAI-compatible endpoint)
+model = "gemma4:e4b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:minio
 max_tokens = 4096  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
 url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint

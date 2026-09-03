@@ -10,6 +10,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "activeLanguage": "en",
     "maxDeviceSessions": 10,
     "ttsEnabled": False,
+    "deviceResponseDisplay": True,
+    "deviceTtsEnabled": True,
     "speech": {
         "sttBackend": "vosk",
         "whisper": {

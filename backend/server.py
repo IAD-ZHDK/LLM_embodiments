@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 from concurrent.futures import Future
@@ -361,9 +362,24 @@ async def _emit_assistant(session: DeviceSession, raw_message: str) -> None:
     tui.update_response(session.session_id, message)
     tui.log_device(session.session_id, f"🤖 {message}")
     await _update_frontend(message, "assistant")
+    if state.comm_method == "WiFi" and state.config.get("deviceResponseDisplay", True):
+        send_response = getattr(session.comm, "send_response", None)
+        if send_response:
+            send_response(message)
     if state.tts and state.config.get("ttsEnabled", False):
         settings = state.get_speech_settings()
         state.tts.say(message, settings["textToSpeechModel"], int(state.volume))
+    elif state.tts and state.comm_method == "WiFi" and state.config.get("deviceTtsEnabled", False):
+        settings = state.get_speech_settings()
+        if session.stt:
+            session.stt.pause()
+        state.tts.say(
+            message,
+            settings["textToSpeechModel"],
+            int(state.volume),
+            output="device",
+            request_id=session.session_id,
+        )
 
 
 async def _handle_llm_response(session: DeviceSession, return_object: Dict[str, Any]) -> None:
@@ -499,6 +515,28 @@ async def _process_stt_message(session_id: str, msg: Dict[str, Any]) -> None:
 
 
 def _tts_callback(msg: Dict[str, Any]) -> None:
+    request_id = str(msg.get("requestId", ""))
+    if request_id:
+        session = state.sessions.get(request_id)
+        if not session:
+            return
+        if msg.get("audioStart"):
+            payload = msg["audioStart"]
+            sample_rate = int(payload.get("sampleRate", 16000)) if isinstance(payload, dict) else 16000
+            session.comm.send_audio_start(sample_rate)
+        elif msg.get("audio"):
+            try:
+                session.comm.send_audio(base64.b64decode(msg["audio"], validate=True))
+            except Exception as exc:
+                print(f"⚠️ [{request_id}] Invalid device TTS audio: {exc}")
+        elif msg.get("audioEnd"):
+            session.comm.send_audio_end()
+        elif isinstance(msg.get("tts"), str) and msg["tts"].startswith("error:"):
+            print(f"⚠️ [{request_id}] {msg['tts']}")
+            if session.stt:
+                session.stt.resume()
+        return
+
     # TTS is currently global/disabled (see config.toml's ttsEnabled); when re-enabled, pause/resume
     # every session's STT so the shared speaker output isn't picked back up by any mic.
     status = msg.get("tts")
@@ -695,7 +733,7 @@ def _reload_runtime() -> None:
 
     _log_llm_startup()
 
-    if bool(state.config.get("ttsEnabled", False)):
+    if bool(state.config.get("ttsEnabled", False) or state.config.get("deviceTtsEnabled", False)):
         state.tts = TextToSpeechWorker(REPO_ROOT, _tts_callback)
 
 
@@ -846,6 +884,8 @@ async def websocket_device(ws: WebSocket) -> None:
             elif data.get("mic") == "muted" and session.stt:
                 session.stt.pause()
             elif data.get("mic") == "unmuted" and session.stt:
+                session.stt.resume()
+            elif data.get("audio") == "finished" and session.stt:
                 session.stt.resume()
             elif isinstance(data.get("deviceInfo"), dict):
                 _apply_device_info(session, data["deviceInfo"])
