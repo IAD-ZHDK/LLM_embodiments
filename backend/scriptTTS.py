@@ -456,7 +456,6 @@ def main():
     """Main TTS loop"""
     global playback_thread, stop_event, pause_event, output_device
     
-    output_device = find_respeaker_device()
     print("Ready for text input...", file=sys.stderr)
     
     for line in sys.stdin:
@@ -485,6 +484,8 @@ def main():
             raw_model = msg.get("model", MODEL_NAMES[0]) if isinstance(msg, dict) else MODEL_NAMES[0]
             output = msg.get("output", "local") if isinstance(msg, dict) else "local"
             request_id = msg.get("requestId", "") if isinstance(msg, dict) else ""
+            if output == "local" and output_device is None:
+                output_device = find_respeaker_device()
             model_name = resolve_tts_model_name(raw_model)
 
             if not text or not model_name:

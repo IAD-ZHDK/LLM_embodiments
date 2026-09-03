@@ -82,25 +82,19 @@ class DeviceWebSocketCommunication:
 
     def send_response(self, message: str) -> bool:
         """Display an assistant reply on this WiFi device."""
-        return self._send_json({"assistantResponse": message})
+        return self._send_json({"assistantResponse": message}, wait=False)
 
     def send_audio_start(self, sample_rate: int) -> bool:
-        return self._send_json({"audioStart": {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}})
+        return self._send_json({"audioStart": {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}}, wait=False)
 
     def send_audio(self, audio: bytes) -> bool:
         if not self.ws:
             return False
         future = self._submit_coro(self.ws.send_bytes(audio))
-        if future is None:
-            return False
-        try:
-            future.result(timeout=3)
-            return True
-        except Exception:
-            return False
+        return future is not None
 
     def send_audio_end(self) -> bool:
-        return self._send_json({"audioEnd": True})
+        return self._send_json({"audioEnd": True}, wait=False)
 
     def receive(self, name: str, value: str) -> None:
         update_object = {"description": name, "value": value}
@@ -122,13 +116,15 @@ class DeviceWebSocketCommunication:
         print(f"🔔 Device notification: {name} = {value}")
         self.callback(json.dumps(payload))
 
-    def _send_json(self, payload: Dict[str, Any]) -> bool:
+    def _send_json(self, payload: Dict[str, Any], wait: bool = True) -> bool:
         # write()/read() run on a worker thread, so the send is bridged onto the asyncio loop and awaited synchronously.
         if not self.ws:
             return False
         future = self._submit_coro(self.ws.send_text(json.dumps(payload)))
         if future is None:
             return False
+        if not wait:
+            return True
         try:
             future.result(timeout=3)
             return True
