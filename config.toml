@@ -56,7 +56,7 @@ language = "auto"      # "auto" detects the spoken language; set "en" or "de" to
 # - Single consumer GPU (~6-8 GB VRAM): "small" or "medium" for a good accuracy/speed balance.
 # - Higher-end GPU (~10 GB+ VRAM): "large-v3" for the best accuracy.
 [speech.languageProfiles.en]
-speechToTextModel = "small.en"  # Whisper model name (sttBackend = "whisper"); use "vosk-model-small-en-us-0.15" for sttBackend = "vosk"
+speechToTextModel = "small"  # Whisper model name (sttBackend = "whisper"); use "vosk-model-small-en-us-0.15" for sttBackend = "vosk"
 textToSpeechModel = "en_GB-alan-low.onnx"
 
 [speech.languageProfiles.de]
@@ -79,6 +79,10 @@ model = "llama3.2:3b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:
 max_tokens = 4096  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
 url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint
+
+# Stream the reply token by token (Ollama only) so the TUI fills in as the model writes.
+# Total generation time is the same; it just starts showing much sooner.
+streamResponses = true
 # For OpenAI instead, setup the .env file with the key (see readme) and uncomment the following lines:
 # provider = "openai"
 # model = "gpt-4.1"

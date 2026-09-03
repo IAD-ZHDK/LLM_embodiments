@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import socket
 import subprocess
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
 from rich.cells import cell_len
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.selection import Selection
@@ -112,6 +114,8 @@ class TerminalUI(App):
         self.device_stt: Dict[str, str] = {}
         self.device_prompt: Dict[str, str] = {}
         self.device_response: Dict[str, str] = {}
+        self._thinking_seen: Dict[str, str] = {}
+        self._thinking_buffer: Dict[str, str] = {}
         self._device_order: list[str] = []
         self._main_thread_id = threading.get_ident()
         self._mounted = False
@@ -311,6 +315,8 @@ class TerminalUI(App):
         self.device_stt.pop(session_id, None)
         self.device_prompt.pop(session_id, None)
         self.device_response.pop(session_id, None)
+        self._thinking_seen.pop(session_id, None)
+        self._thinking_buffer.pop(session_id, None)
 
     def clear_devices(self) -> None:
         if threading.get_ident() != self._main_thread_id:
@@ -365,6 +371,47 @@ class TerminalUI(App):
             return
         self.device_response[session_id] = text
         self._refresh_device_now_playing(session_id)
+
+    def update_thinking(self, session_id: str, text: str) -> None:
+        """Append newly streamed reasoning to the device log, flushed at sentence boundaries.
+
+        Reasoning arrives as the full text so far, so only the unseen tail is written.
+        """
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.update_thinking, session_id, text)
+            return
+
+        seen = self._thinking_seen.get(session_id, "")
+        if not text.startswith(seen):
+            seen = ""
+        self._thinking_seen[session_id] = text
+
+        buffer = self._thinking_buffer.get(session_id, "") + text[len(seen):]
+        while True:
+            match = re.search(r"[.!?\n]\s", buffer)
+            if not match:
+                break
+            self._write_thinking(session_id, buffer[: match.end()])
+            buffer = buffer[match.end():]
+        self._thinking_buffer[session_id] = buffer
+
+    def reset_thinking(self, session_id: str) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.reset_thinking, session_id)
+            return
+        self._write_thinking(session_id, self._thinking_buffer.get(session_id, ""))
+        self._thinking_seen[session_id] = ""
+        self._thinking_buffer[session_id] = ""
+
+    def _write_thinking(self, session_id: str, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        try:
+            log = self.query_one(f"#log-{session_id}", RichLog)
+        except Exception:
+            return
+        log.write(Text(f"\U0001F916\U0001F4AD {text}", style="grey50 italic"))
 
     def _refresh_device_now_playing(self, session_id: str) -> None:
         try:
@@ -444,6 +491,16 @@ def update_prompt(session_id: str, text: str) -> None:
 def update_response(session_id: str, text: str) -> None:
     if _app is not None:
         _app.update_response(session_id, text)
+
+
+def update_thinking(session_id: str, text: str) -> None:
+    if _app is not None:
+        _app.update_thinking(session_id, text)
+
+
+def reset_thinking(session_id: str) -> None:
+    if _app is not None:
+        _app.reset_thinking(session_id)
 
 
 def _tui_print(*args, **kwargs) -> None:

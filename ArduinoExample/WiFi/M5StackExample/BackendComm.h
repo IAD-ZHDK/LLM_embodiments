@@ -31,6 +31,7 @@ namespace BackendComm
     static bool webSocketStarted = false;
     static bool mdnsStarted = false;
     static unsigned long nextWifiRetryAt = 0;
+    static unsigned long micResumeAt = 0;
 
     static String wifiSsid;
     static String wifiPassword;
@@ -90,6 +91,42 @@ namespace BackendComm
         esp_timer_start_periodic(analogMicTimer, 1000000ULL / kAnalogMicSampleRate);
         Serial.printf("[Mic] No built-in mic detected; sampling analog mic on pin G%d at %luHz.\n",
                       kAnalogMicPin, (unsigned long)kAnalogMicSampleRate);
+    }
+
+    inline void _configureBuiltInMic()
+    {
+        auto micConfig = M5.Mic.config();
+        micConfig.noise_filter_level = kMicNoiseFilterLevel;
+        M5.Mic.config(micConfig);
+    }
+
+    inline void playTone(uint32_t frequency, uint32_t durationMs)
+    {
+        // CoreS3 routes its ES7210 microphones and AW88298 speaker over the same I2S clocks.
+        if (!useAnalogMic && M5.Mic.isEnabled())
+        {
+            while (M5.Mic.isRecording())
+                M5.delay(1);
+            M5.Mic.end();
+        }
+        M5.Speaker.begin();
+        M5.Speaker.tone(frequency, durationMs);
+        Serial.printf("[Speaker] Tone %luHz for %lums.\n", (unsigned long)frequency, (unsigned long)durationMs);
+        micResumeAt = millis() + durationMs + 50;
+    }
+
+    inline void _restoreMicAfterTone()
+    {
+        if (micResumeAt == 0 || millis() < micResumeAt)
+            return;
+        M5.Speaker.end();
+        if (!useAnalogMic)
+        {
+            M5.Mic.begin();
+            if (M5.Mic.isEnabled())
+                _configureBuiltInMic();
+        }
+        micResumeAt = 0;
     }
 
     inline void sendNotification(const String &name, const String &value)
@@ -375,18 +412,30 @@ namespace BackendComm
         webSocket.sendBIN(reinterpret_cast<uint8_t *>(audioBuffer), kAudioChunkSamples * sizeof(int16_t));
     }
 
-    inline void _checkMuteButton()
+    inline void _toggleMicMute()
+    {
+        micMuted = !micMuted;
+        displayState.micStatus = micMuted ? "Mic: muted" : "Mic: live";
+        displayState.micLevel = 0;
+        _sendMicState();
+        redrawDisplay();
+        drawMicLevelBar();
+    }
+
+    inline void _checkMuteControl()
     {
         M5.update();
-        if (M5.BtnA.wasPressed())
+        bool activated = M5.BtnA.wasPressed();
+
+        // Boards with a touch screen use the mic-level meter as their mute control.
+        if (!activated && M5.Touch.getCount())
         {
-            micMuted = !micMuted;
-            displayState.micStatus = micMuted ? "Mic: muted" : "Mic: live";
-            displayState.micLevel = 0;
-            _sendMicState();
-            redrawDisplay();
-            drawMicLevelBar();
+            auto touch = M5.Touch.getDetail(0);
+            activated = touch.wasClicked() && touch.x >= kMicBarX && touch.x < kMicBarX + kMicBarWidth && touch.y >= kMicBarY && touch.y < kMicBarY + kMicBarHeight;
         }
+
+        if (activated)
+            _toggleMicMute();
     }
 
     // Call once from setup(): brings up the M5Stack, mic, WiFi, and the backend WebSocket.
@@ -395,7 +444,14 @@ namespace BackendComm
         Serial.begin(115200);
         auto cfg = M5.config();
         M5.begin(cfg);
+        // M5Unified's microphone example ends the speaker before recording; CoreS3 needs this.
+        M5.Speaker.end();
         M5.Mic.begin();
+        if (M5.Mic.isEnabled())
+        {
+            _configureBuiltInMic();
+            Serial.printf("[Mic] Built-in microphone enabled; noise filter level: %u.\n", kMicNoiseFilterLevel);
+        }
         useAnalogMic = !M5.Mic.isEnabled();
         bool imuFound = M5.Imu.begin();
         Serial.printf("[IMU] begin() -> %s, type=%d (0 = imu_none: no IMU detected on this board)\n",
@@ -420,7 +476,8 @@ namespace BackendComm
     // Add your own sensor/notification checks (see checkShake() in the .ino) alongside this call.
     inline void loop()
     {
-        _checkMuteButton();
+        _checkMuteControl();
+        _restoreMicAfterTone();
         if (WiFi.status() != WL_CONNECTED)
         {
             if (millis() >= nextWifiRetryAt)

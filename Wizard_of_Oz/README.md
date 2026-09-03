@@ -4,7 +4,8 @@ A drop-in replacement for the real Python backend's ESP32-facing side, with no L
 Use this to test an Arduino device (mic, sensors, tool calls) end-to-end without touching
 Ollama/OpenAI, STT, or TTS — a human ("the wizard") plays the role of the model instead.
 
-- **Audio**: streamed straight to your computer's speakers as it arrives. No speech-to-text.
+- **Audio**: streamed straight to your computer's speakers as it arrives, while Whisper also prints
+  live transcription and PCM signal levels for diagnostics.
 - **Text out**: nothing is spoken back to the device. No text-to-speech.
 - **Tools**: whatever the device declares on connect (its persona + MCP-style tool list, the
   same `deviceInfo` message the real backend consumes) is printed to the terminal. You can
@@ -53,5 +54,17 @@ At the `woz>` prompt:
 - `quit` / `exit` — stop the console prompt (the server keeps running; Ctrl+C to fully stop)
 
 Anything the device reports (button presses, sensor readings, mic mute state) prints live to
-the terminal as `🔔 Notification: ...` / `🎙️  Mic: ...` lines, and its mic audio plays out of
-your speakers in real time.
+the terminal as `🔔 Notification: ...` / `🎙️  Mic: ...` lines. Its mic audio plays out of your
+speakers in real time; every two seconds the Wizard also prints a `🎚️ PCM level` line and, after
+every three seconds of received audio, prints `📝 Transcript: ...` from Whisper. This diagnostic
+path deliberately bypasses voice-activity detection, so it reports `(no speech recognized)` when
+Whisper receives audio but cannot recognize it.
+
+Whisper defaults to `small.en`, the same model configured for English in the main backend. To use
+a different local model or GPU, set these before starting the Wizard:
+
+```bash
+WIZARD_WHISPER_MODEL=base.en WIZARD_WHISPER_DEVICE=cuda WIZARD_WHISPER_COMPUTE_TYPE=float16 python3 server.py
+```
+
+Set `WIZARD_TRANSCRIBE_WINDOW_SECONDS` to change the three-second diagnostic window.

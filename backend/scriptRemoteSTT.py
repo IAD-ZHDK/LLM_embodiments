@@ -34,6 +34,7 @@ from Microphone.vad_utils import VAD
 
 MODEL_PATH = "STTmodels/"
 RATE = 16000  # must match the PCM16 mono sample rate streamed by the remote device
+VAD_FRAME_BYTES = RATE * 30 // 1000 * 2
 
 
 def _cuda_available() -> bool:
@@ -87,31 +88,44 @@ class WhisperSession:
         )
         self.language = None if str(language).lower() in ("auto", "", "none") else str(language)
         self.silence_hangover = silence_hangover
-        self.vad = VAD(aggressiveness=2, sampling_rate=RATE, frame_duration_ms=30)
+        self.vad = VAD(
+            aggressiveness=1,
+            sampling_rate=RATE,
+            frame_duration_ms=30,
+            energy_threshold=80,
+        )
+        self.vad.positive_frames_threshold = 1
+        self.vad.min_speech_frames = 1
         self._buffer = bytearray()
+        self._vad_buffer = bytearray()
         self._speaking = False
         self._silence_since: Optional[float] = None
 
     def push(self, chunk: bytes) -> Optional[str]:
-        is_speech = self.vad.process(chunk)
-        now = time.time()
-        if is_speech:
-            self._buffer.extend(chunk)
-            self._silence_since = None
-            self._speaking = True
-            return None
-        if self._speaking:
-            if self._silence_since is None:
-                self._silence_since = now
-                return None
-            if now - self._silence_since >= self.silence_hangover:
-                self._speaking = False
+        self._vad_buffer.extend(chunk)
+        while len(self._vad_buffer) >= VAD_FRAME_BYTES:
+            frame = bytes(self._vad_buffer[:VAD_FRAME_BYTES])
+            del self._vad_buffer[:VAD_FRAME_BYTES]
+            is_speech = self.vad.process(frame)
+            now = time.monotonic()
+            if is_speech:
+                self._buffer.extend(frame)
                 self._silence_since = None
-                return self._finalize()
+                self._speaking = True
+                continue
+            if self._speaking:
+                if self._silence_since is None:
+                    self._silence_since = now
+                    continue
+                if now - self._silence_since >= self.silence_hangover:
+                    self._speaking = False
+                    self._silence_since = None
+                    return self._finalize()
         return None
 
     def reset(self) -> None:
         self._buffer = bytearray()
+        self._vad_buffer = bytearray()
         self._speaking = False
         self._silence_since = None
 
@@ -121,7 +135,13 @@ class WhisperSession:
             return None
         audio_np = np.frombuffer(bytes(buffered), dtype=np.int16).astype(np.float32) / 32768.0
         try:
-            segments, _info = self.model.transcribe(audio_np, language=self.language, beam_size=1, vad_filter=False)
+            segments, _info = self.model.transcribe(
+                audio_np,
+                language=self.language,
+                beam_size=1,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
+            )
             text = " ".join(segment.text.strip() for segment in segments).strip()
         except Exception as exc:
             print(f"Whisper transcription error: {exc}", file=sys.stderr)

@@ -52,6 +52,9 @@ inline const int kMicBarY = 110;
 inline const int kMicBarWidth = 200;
 inline const int kMicBarHeight = 16;
 
+// 0 disables M5Unified's built-in filter; 64 is a conservative starting point for CoreS3's ES7210 mics.
+inline const uint8_t kMicNoiseFilterLevel = 64;
+
 inline void redrawDisplay()
 {
     M5.Lcd.fillScreen(BLACK);

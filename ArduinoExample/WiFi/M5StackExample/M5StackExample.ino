@@ -14,17 +14,17 @@
 #include "BackendComm.h"
 
 // --- Device state ---
-bool vibrationOn = false;
+bool soundOn = false;
+int soundFrequency = 1000; // Hz
 String storedString = "hello from the M5Stack";
 unsigned long yellowCircleUntil = 0;
 bool yellowCircleShown = false;
 
 // --- Tool handlers: called when the model asks this device to do something ---
-void set_vibration(const String &value)
+void set_sound(const String &value)
 {
-    vibrationOn = value == "1" || value == "true";
-    // M5Stack has no built-in LED; use the built-in vibration motor instead (no-op on boards without one).
-    M5.Power.setVibration(vibrationOn ? 255 : 0);
+    soundOn = true;
+    soundFrequency = value.toInt();
 }
 
 void get_String(const String &value)
@@ -45,8 +45,7 @@ void show_yellow_circle(const String &value)
 
 // --- Tools available to the model (MCP-style: name, description, dataType, handler) ---
 DeviceTool deviceTools[] = {
-    {"set_vibration", "Turns the vibration motor on or off. value=1 turns it on, value=0 turns it off.", "bool", "write", set_vibration},
-    {"get_String", "Reads back the note previously saved with set_String. Only call this when asked what is stored on the device.", "none", "read", get_String},
+    {"set_sound", "Makes a sound for 500 miliseconds. You can set the frequency with the value.", "int", "write", set_sound},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String},
     {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle},
 };
@@ -88,12 +87,20 @@ void checkShake()
 void setup()
 {
     BackendComm::begin();
+
+    BackendComm::playTone(2000, 100);
 }
 
 void loop()
 {
     BackendComm::loop();
     checkShake();
+
+    if (soundOn)
+    {
+        BackendComm::playTone(soundFrequency, 500);
+        soundOn = false;
+    }
 
     if (yellowCircleUntil && !yellowCircleShown)
     {

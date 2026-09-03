@@ -87,7 +87,7 @@ Single user-facing config, loaded via Python's stdlib `tomllib`:
 ## Conventions
 
 - Backend state lives in `backend.server.state` (module-level singleton). WebSocket callbacks submit coroutines back to the FastAPI loop via `_submit()` + `asyncio.run_coroutine_threadsafe`.
-- LLM calls are serialized through `state.llm_lock` and tagged with a `llm_seq` request id for log correlation.
+- LLM calls are serialized per session through `session.lock` (so devices don't block each other) and tagged with a `llm_seq` request id for log correlation.
 - New functions go in `config.toml` under `functions.tools`. For device calls add a matching `deviceCommand` or a method on `SerialCommunication`/`DeviceWebSocketCommunication`.
 - New language: add a key under `speech.languageProfiles` and the model folders under `backend/STTmodels` / `backend/TTSmodels`.
 - A WiFi device (M5Stack) can declare its own tools/persona at connect time via a `deviceInfo` message (see `function_handler.register_device_tools` and `server._apply_device_info`) instead of `config.toml`.

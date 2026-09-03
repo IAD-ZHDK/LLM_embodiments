@@ -47,6 +47,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "provider": "openai",
             "url": "",
         },
+        "streamResponses": True,
     },
     "functions": {"tools": {}},
     "conversationProtocol": [],

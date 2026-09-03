@@ -7,13 +7,19 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
 
 class LLMAPI:
-    def __init__(self, config: Dict[str, Any], function_handler: Any):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        function_handler: Any,
+        on_delta: Optional[Callable[[str], None]] = None,
+        on_thinking: Optional[Callable[[str], None]] = None,
+    ):
         self.config = config
         self.function_handler = function_handler
         settings = config.get("llmSettings", {})
@@ -22,8 +28,55 @@ class LLMAPI:
         self.model = settings.get("model", "llama3.2:3b")
         self.max_tokens = settings.get("max_tokens", 2048)
         self.user_id = settings.get("user_id", "1")
+        self.on_delta = on_delta
+        self.on_thinking = on_thinking
         self.ai_hat_status = self._detect_ai_hat_plus()
         self._apply_ai_hat_routing(settings)
+
+    @staticmethod
+    def _split_reasoning(text: str) -> tuple[str, str]:
+        """Separate <think> reasoning from spoken text; the block may still be open mid-stream."""
+        reasoning: List[str] = []
+
+        def capture(match: "re.Match[str]") -> str:
+            reasoning.append(match.group(1))
+            return ""
+
+        visible = re.sub(r"<think>([\s\S]*?)</think>", capture, text or "", flags=re.IGNORECASE)
+        open_idx = visible.lower().rfind("<think>")
+        if open_idx != -1:
+            reasoning.append(visible[open_idx + len("<think>"):])
+            visible = visible[:open_idx]
+        return visible, "\n".join(part.strip() for part in reasoning if part.strip())
+
+    def _reasoning_of(self, message: Dict[str, Any], content: str) -> str:
+        # Newer Ollama splits reasoning into message.thinking; older templates inline <think> tags.
+        native = str(message.get("thinking") or "").strip()
+        inline = self._split_reasoning(content)[1]
+        return "\n".join(part for part in (native, inline) if part)
+
+    def _emit_reasoning(self, data: Dict[str, Any]) -> None:
+        if not self.on_thinking or not isinstance(data, dict):
+            return
+        message = data.get("message")
+        if not isinstance(message, dict):
+            choices = data.get("choices") or [{}]
+            message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        if not isinstance(message, dict):
+            return
+        reasoning = self._reasoning_of(message, str(message.get("content") or ""))
+        if reasoning:
+            try:
+                self.on_thinking(reasoning)
+            except Exception:
+                pass
+
+    def _streaming_enabled(self) -> bool:
+        settings = self.config.get("llmSettings", {})
+        if not isinstance(settings, dict):
+            return False
+        # Only the Ollama line-delimited JSON stream is handled here.
+        return bool(settings.get("streamResponses", True)) and self.provider in ("ollama", "local")
 
     def _debug_enabled(self) -> bool:
         settings = self.config.get("llmSettings", {})
@@ -221,7 +274,7 @@ class LLMAPI:
         }
         payload = {
             "model": settings.get("model", self.model),
-            "stream": False,
+            "stream": self._streaming_enabled(),
             "messages": messages,
             "options": options,
         }
@@ -392,7 +445,7 @@ class LLMAPI:
 
         try:
             self._protocol_trace("tool_reply_request", payload)
-            data = self._request_json(self.url, headers, payload)
+            data = self._post(headers, payload)
             self._protocol_trace("tool_reply_response", data)
         except Exception:
             return ""
@@ -400,7 +453,9 @@ class LLMAPI:
         if not isinstance(data, dict) or data.get("error"):
             return ""
 
+        self._emit_reasoning(data)
         message = self._strip_arch_markup(self._extract_message_text(data))
+        message = self._split_reasoning(message)[0]
         if message and (self._extract_arch_tool_call(message) or self._extract_fenced_json_tool_call(message)):
             return ""
         return message
@@ -409,6 +464,78 @@ class LLMAPI:
     def _request_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
         return response.json()
+
+    def _request_stream(self, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Consume Ollama's line-delimited JSON stream and rebuild one non-streamed response.
+
+        Total generation time is unchanged; this exists so on_delta can show text as it arrives.
+        """
+        content_parts: List[str] = []
+        thinking_parts: List[str] = []
+        tool_calls: List[Dict[str, Any]] = []
+        final: Dict[str, Any] = {}
+        last_visible = ""
+        last_reasoning = ""
+
+        with requests.post(url=self.url, headers=headers, data=json.dumps(payload), timeout=120, stream=True) as response:
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except Exception:
+                    continue
+                if chunk.get("error"):
+                    return chunk
+
+                message = chunk.get("message") or {}
+                thinking_piece = str(message.get("thinking") or "")
+                if thinking_piece:
+                    thinking_parts.append(thinking_piece)
+
+                piece = str(message.get("content") or "")
+                if piece:
+                    content_parts.append(piece)
+
+                if piece or thinking_piece:
+                    visible, inline_reasoning = self._split_reasoning("".join(content_parts))
+                    reasoning = "\n".join(
+                        part for part in ("".join(thinking_parts).strip(), inline_reasoning) if part
+                    )
+                    if self.on_thinking and reasoning and reasoning != last_reasoning:
+                        last_reasoning = reasoning
+                        try:
+                            self.on_thinking(reasoning)
+                        except Exception:
+                            pass
+                    if self.on_delta and visible and visible != last_visible:
+                        last_visible = visible
+                        try:
+                            self.on_delta(visible)
+                        except Exception:
+                            pass
+
+                calls = message.get("tool_calls")
+                if isinstance(calls, list) and calls:
+                    tool_calls.extend(calls)
+                if chunk.get("done"):
+                    final = chunk
+
+        merged = dict(final)
+        message = dict(merged.get("message") or {})
+        message["role"] = message.get("role", "assistant")
+        message["content"] = "".join(content_parts)
+        if thinking_parts:
+            message["thinking"] = "".join(thinking_parts)
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        merged["message"] = message
+        return merged
+
+    def _post(self, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+        if payload.get("stream"):
+            return self._request_stream(headers, payload)
+        return self._request_json(self.url, headers, payload)
 
     def _format_provider_error(self, err: Any) -> str:
         message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
@@ -535,13 +662,15 @@ class LLMAPI:
             self._protocol_trace("request", payload)
 
         try:
-            data = self._request_json(self.url, headers, payload)
+            data = self._post(headers, payload)
         except Exception as exc:
             return {"role": "error", "message": f"Error fetching {self.url}: {exc}"}
 
         if self._debug_enabled():
             self._debug_log("response.raw", data)
             self._protocol_trace("response", data)
+
+        self._emit_reasoning(data)
 
         if isinstance(data, dict) and data.get("error"):
             err = data["error"]
@@ -585,6 +714,8 @@ class LLMAPI:
                 return self._execute_tool_call(name, raw_args)
 
         message = self._extract_message_text(data) if isinstance(data, dict) else ""
+        # Reasoning is shown live in the UI; it must not reach history or the spoken reply.
+        message = self._split_reasoning(message)[0]
 
         arch_call = self._extract_arch_tool_call(message)
         if arch_call:
@@ -618,7 +749,7 @@ class LLMAPI:
                     fallback_payload = self._build_ollama_request(messages, include_tools=False)
                 else:
                     fallback_payload = self._build_openai_request(messages, include_functions=False)
-                fallback_data = self._request_json(self.url, headers, fallback_payload)
+                fallback_data = self._post(headers, fallback_payload)
                 self._protocol_trace("fallback_request", fallback_payload)
                 self._protocol_trace("fallback_response", fallback_data)
                 if isinstance(fallback_data, dict):

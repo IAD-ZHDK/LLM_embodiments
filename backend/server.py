@@ -46,8 +46,21 @@ class DeviceSession:
         self.comm = comm
         self.config = config
         self.function_handler = FunctionHandler(config, comm)
-        self.llm_api = LLMAPI(config, self.function_handler)
+        self.llm_api = LLMAPI(
+            config,
+            self.function_handler,
+            on_delta=self._on_llm_delta,
+            on_thinking=self._on_llm_thinking,
+        )
         self.stt: Optional[SpeechToTextWorker] = None
+        # Per session, so one device's turns stay ordered without blocking the other devices.
+        self.lock = asyncio.Lock()
+
+    def _on_llm_delta(self, partial: str) -> None:
+        tui.update_response(self.session_id, partial)
+
+    def _on_llm_thinking(self, reasoning: str) -> None:
+        tui.update_thinking(self.session_id, reasoning)
 
     def close(self) -> None:
         if self.stt:
@@ -120,7 +133,6 @@ class BackendState:
         self.comm_method = "Serial"
         self.tts = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.llm_lock: Optional[asyncio.Lock] = None
         self.llm_seq = 0
 
     def get_speech_settings(self) -> Dict[str, Any]:
@@ -413,21 +425,21 @@ async def _call_llm(session: DeviceSession, text: str, role: str, source: str) -
     if not session.llm_api:
         return None
 
-    if state.llm_lock is None:
-        state.llm_lock = asyncio.Lock()
-
     state.llm_seq += 1
     req_id = state.llm_seq
     preview = text[:80].replace("\n", " ")
     print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} queued role={role} text={preview!r}")
     tui.update_prompt(session.session_id, text)
+    tui.reset_thinking(session.session_id)
     tui.log_device(session.session_id, f"💬 {text}")
 
     try:
-        # Shared lock: all sessions serialize through the same local model, one request at a time.
-        async with state.llm_lock:
+        # Only this device's own turns are serialized; other devices run concurrently and are
+        # queued by the model server itself (see Ollama's OLLAMA_NUM_PARALLEL).
+        async with session.lock:
             print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} started")
             response = await asyncio.to_thread(session.llm_api.send, text, role)
+            tui.reset_thinking(session.session_id)
             print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} completed")
             return response
     except Exception as exc:
@@ -690,7 +702,6 @@ def _reload_runtime() -> None:
 @app.on_event("startup")
 async def startup() -> None:
     state.loop = asyncio.get_running_loop()
-    state.llm_lock = asyncio.Lock()
     asyncio.create_task(tui.start(port=BACKEND_PORT, on_quit=_request_shutdown, on_prompt=_submit_terminal_prompt))
     _reload_runtime()
 
@@ -702,7 +713,6 @@ async def shutdown() -> None:
     state.sessions.clear()
     if state.tts:
         state.tts.close()
-    state.llm_lock = None
     state.loop = None
     app_instance = tui.get_app()
     if app_instance is not None:

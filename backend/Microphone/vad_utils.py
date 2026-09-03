@@ -3,7 +3,17 @@ import collections
 import time
 import os
 import sys
+import warnings
 import importlib.util
+
+# webrtcvad (v2.x) does `import pkg_resources` at module load, which emits a
+# UserWarning on setuptools >= 80 even when pinned to setuptools<81. We don't
+# control the installed package, so suppress only that specific warning here.
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
 
 class VAD:
     """Voice Activity Detection using Google's WebRTC VAD"""
