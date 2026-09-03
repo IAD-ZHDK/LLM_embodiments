@@ -43,7 +43,7 @@ sttBackend = "whisper"  # "vosk" | "whisper"
 
 # Only used when sttBackend = "whisper". Ignored otherwise.
 [speech.whisper]
-device = "auto"       # "auto" | "cpu" | "cuda" - "auto" picks a GPU if one is detected, else CPU
+device = "auto"       # "auto" | "cpu" | "cuda" - "auto" falls back to CPU when CUDA is unavailable or incomplete
 deviceIndex = 0        # Which GPU to use when device resolves to "cuda" (e.g. 1 for a second card).
 # Set this per instance/session once multiple simultaneous transcriptions across several GPUs are supported.
 computeType = "auto"  # "auto" | "int8" | "float16" | "float32" - "auto" picks float16 on GPU, int8 on CPU

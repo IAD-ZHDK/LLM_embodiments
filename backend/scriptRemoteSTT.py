@@ -83,9 +83,15 @@ class WhisperSession:
             f"compute_type={resolved_compute_type})...",
             file=sys.stderr,
         )
-        self.model = WhisperModel(
-            model_name, device=resolved_device, device_index=device_index, compute_type=resolved_compute_type
-        )
+        try:
+            self.model = WhisperModel(
+                model_name, device=resolved_device, device_index=device_index, compute_type=resolved_compute_type
+            )
+        except Exception as exc:
+            if device != "auto" or resolved_device != "cuda":
+                raise
+            print(f"CUDA initialization failed ({exc}); falling back to CPU/int8.", file=sys.stderr)
+            self.model = WhisperModel(model_name, device="cpu", compute_type="int8")
         self.language = None if str(language).lower() in ("auto", "", "none") else str(language)
         self.silence_hangover = silence_hangover
         self.vad = VAD(

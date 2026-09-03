@@ -293,7 +293,6 @@ class WhisperRecognizer:
         self.PAUSE = False
         self.silence_hangover = silence_hangover
         self.language = None if str(language).lower() in ("auto", "", "none") else str(language)
-
         resolved_device = device if device != "auto" else ("cuda" if _cuda_available() else "cpu")
         resolved_compute_type = compute_type
         if resolved_compute_type == "auto":
@@ -314,7 +313,12 @@ class WhisperRecognizer:
             )
             print(f"✅ Whisper recognizer initialized with {modelName}", file=sys.stderr)
         except Exception as e:
-            print(f"❌ Error initializing Whisper recognizer: {e}", file=sys.stderr)
+            if device != "auto" or resolved_device != "cuda":
+                print(f"❌ Error initializing Whisper recognizer: {e}", file=sys.stderr)
+                raise
+            print(f"CUDA initialization failed ({e}); falling back to CPU/int8.", file=sys.stderr)
+            self.model = WhisperModel(modelName, device="cpu", compute_type="int8")
+            print(f"Whisper recognizer initialized with {modelName} on CPU", file=sys.stderr)
 
         self.vad = VAD(aggressiveness=2, sampling_rate=rate, frame_duration_ms=30)
         self._speech_buffer = bytearray()
