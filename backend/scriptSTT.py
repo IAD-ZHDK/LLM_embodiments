@@ -126,9 +126,10 @@ class SpeechRecognizer:
         except Exception as e:
             print(f"❌ Error initializing speech recognizer: {e}", file=sys.stderr)
 
-    def default_callback(self, text, partial):
+    def default_callback(self, text, partial, duration_ms=None):
         if text:
-            print(f"Final Text: {text}", file=sys.stderr)
+            duration = f" ({duration_ms / 1000:.2f}s total)" if duration_ms is not None else ""
+            print(f"Final Text{duration}: {text}", file=sys.stderr)
         if partial:
             print(f"Partial Text: {partial}", file=sys.stderr)
 
@@ -324,6 +325,7 @@ class WhisperRecognizer:
         self._speech_buffer = bytearray()
         self._silence_since = None
         self._speaking = False
+        self._speech_started_at = None
 
     def default_callback(self, text, partial):
         if text:
@@ -331,6 +333,8 @@ class WhisperRecognizer:
 
     def _transcribe_buffer(self):
         buffered, self._speech_buffer = self._speech_buffer, bytearray()
+        speech_started_at = self._speech_started_at
+        self._speech_started_at = None
         if not self.model or not buffered:
             return
         audio_np = np.frombuffer(bytes(buffered), dtype=np.int16).astype(np.float32) / 32768.0
@@ -341,7 +345,8 @@ class WhisperRecognizer:
             print(f"Whisper transcription error: {e}", file=sys.stderr)
             text = ""
         if text:
-            self.callback(text, None)
+            duration_ms = round((time.perf_counter() - speech_started_at) * 1000) if speech_started_at is not None else None
+            self.callback(text, None, duration_ms)
 
     def run(self):
         self.running = True
@@ -358,11 +363,14 @@ class WhisperRecognizer:
                 self._speech_buffer = bytearray()
                 self._speaking = False
                 self._silence_since = None
+                self._speech_started_at = None
                 continue
 
             is_speech = self.vad.process(data)
             now = time.time()
             if is_speech:
+                if not self._speaking:
+                    self._speech_started_at = time.perf_counter()
                 self._speech_buffer.extend(data)
                 self._silence_since = None
                 self._speaking = True
@@ -400,14 +408,16 @@ def detect_sound(audio_chunk, threshold=THRESHOLD):
     return volume > threshold
 
 # Communication functions
-def send_message(name, string, direction=None):
+def send_message(name, string, direction=None, extra=None):
     msg = {f"{name}": f"{string}"}
     if direction is not None:
         msg["direction"] = direction
+    if extra:
+        msg.update(extra)
     print(json.dumps(msg))
     sys.stdout.flush()
 
-def STTCallBack(text, partial):
+def STTCallBack(text, partial, duration_ms=None):
     direction = None
     # Try to get DoA if mic has get_doa or get_direction
     if (
@@ -424,7 +434,8 @@ def STTCallBack(text, partial):
             direction = None
     if text:
         print(f"Final Text: {text}", file=sys.stderr)
-        send_message("confirmedText", text, direction)
+        extra = {"durationMs": duration_ms} if duration_ms is not None else None
+        send_message("confirmedText", text, direction, extra)
     if partial:
         # print(f"Partial Text: {partial}", file=sys.stderr)
         send_message("interimResult", partial, direction)

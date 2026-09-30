@@ -28,13 +28,11 @@ def _config_defaults() -> dict:
         print(f"Could not read config.toml ({exc}); using built-in defaults.", file=sys.stderr)
         return {}
 
-    language = config.get("activeLanguage", "en")
     speech = config.get("speech", {})
-    profile = speech.get("languageProfiles", {}).get(language, {})
     whisper = speech.get("whisper", {})
     return {
         "backend": speech.get("sttBackend", "vosk"),
-        "model": profile.get("speechToTextModel", "vosk-model-small-en-us-0.15"),
+        "model": speech.get("speechToTextModel", "vosk-model-small-en-us-0.15"),
         "device": whisper.get("device", "auto"),
         "compute_type": whisper.get("computeType", "auto"),
         "device_index": whisper.get("deviceIndex", 0),

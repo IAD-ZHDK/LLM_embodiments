@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import re
+import time
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -54,6 +55,13 @@ class DeviceSession:
             on_thinking=self._on_llm_thinking,
         )
         self.stt: Optional[SpeechToTextWorker] = None
+        self.audio_mic_muted = False
+        self.audio_speaker_muted = False
+        self.local_tts_started_at = 0.0
+        self.local_tts_text = ""
+        self.stt_activity_started_at = 0.0
+        self.audio_input_local = kind != "WiFi"
+        self.audio_output_local = kind != "WiFi"
         # Per session, so one device's turns stay ordered without blocking the other devices.
         self.lock = asyncio.Lock()
 
@@ -137,14 +145,12 @@ class BackendState:
         self.llm_seq = 0
 
     def get_speech_settings(self) -> Dict[str, Any]:
-        language = self.config.get("activeLanguage", "en")
         speech = self.config.get("speech", {})
-        profile = speech.get("languageProfiles", {}).get(language, {})
         whisper = speech.get("whisper", {}) if isinstance(speech.get("whisper"), dict) else {}
         return {
             "sttBackend": speech.get("sttBackend", "vosk"),
-            "speechToTextModel": profile.get("speechToTextModel", "vosk-model-small-en-us-0.15"),
-            "textToSpeechModel": profile.get("textToSpeechModel", "en_GB-alan-low.onnx"),
+            "speechToTextModel": speech.get("speechToTextModel", "vosk-model-small-en-us-0.15"),
+            "textToSpeechModel": speech.get("textToSpeechModel", "en_GB-alan-low.onnx"),
             "whisperDevice": whisper.get("device", "auto"),
             "whisperComputeType": whisper.get("computeType", "auto"),
             "whisperDeviceIndex": whisper.get("deviceIndex", 0),
@@ -354,23 +360,41 @@ def _log_tool_call(session: DeviceSession, name: str, args: Any, result: Dict[st
     tui.log_device(session.session_id, line)
 
 
-async def _emit_assistant(session: DeviceSession, raw_message: str) -> None:
+async def _emit_assistant(
+    session: DeviceSession,
+    raw_message: str,
+    processing_ms: Optional[float] = None,
+) -> None:
     message = _clean_assistant_message(raw_message)
     message = await _process_inline_pseudo_calls(session, message)
     if not message:
         return
     tui.update_response(session.session_id, message)
-    tui.log_device(session.session_id, f"🤖 {message}")
+    elapsed = f" ({processing_ms / 1000:.2f}s)" if processing_ms is not None else ""
+    tui.log_device(session.session_id, f"🤖 LLM total{elapsed}: {message}")
     await _update_frontend(message, "assistant")
     if state.comm_method == "WiFi" and state.config.get("deviceResponseDisplay", True):
         send_response = getattr(session.comm, "send_response", None)
         if send_response:
             send_response(message)
-    if state.tts and state.config.get("ttsEnabled", False):
+    if state.tts and not session.audio_speaker_muted and session.audio_output_local and state.config.get("ttsEnabled", False):
         settings = state.get_speech_settings()
-        state.tts.say(message, settings["textToSpeechModel"], int(state.volume))
-    elif state.tts and state.comm_method == "WiFi" and state.config.get("deviceTtsEnabled", False):
+        session.local_tts_text = message
+        state.tts.say(
+            message,
+            settings["textToSpeechModel"],
+            int(state.volume),
+            request_id=session.session_id,
+        )
+    elif (
+        state.tts
+        and not session.audio_speaker_muted
+        and not session.audio_output_local
+        and session.kind == "WiFi"
+        and state.config.get("deviceTtsEnabled", False)
+    ):
         settings = state.get_speech_settings()
+        session.local_tts_text = message
         if session.stt:
             session.stt.pause()
         state.tts.say(
@@ -389,14 +413,23 @@ async def _handle_llm_response(session: DeviceSession, return_object: Dict[str, 
     tool_call = return_object.get("toolCall")
     if isinstance(tool_call, dict):
         _log_tool_call(session, str(tool_call.get("name", "?")), tool_call.get("arguments"), return_object)
+    processing_ms = return_object.get("_processingMs")
     if role == "assistant":
-        await _emit_assistant(session, str(return_object.get("message", "")))
+        await _emit_assistant(
+            session,
+            str(return_object.get("message", "")),
+            float(processing_ms) if processing_ms is not None else None,
+        )
         return
 
     # A tool call still gets a spoken answer, so the device doesn't go silent after acting.
     spoken = str(return_object.get("spokenReply", ""))
     if spoken:
-        await _emit_assistant(session, spoken)
+        await _emit_assistant(
+            session,
+            spoken,
+            float(processing_ms) if processing_ms is not None else None,
+        )
 
     if role == "function":
         await _frontend_function(str(return_object.get("message", "")), return_object.get("arguments", {}))
@@ -454,9 +487,13 @@ async def _call_llm(session: DeviceSession, text: str, role: str, source: str) -
         # queued by the model server itself (see Ollama's OLLAMA_NUM_PARALLEL).
         async with session.lock:
             print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} started")
+            started_at = time.perf_counter()
             response = await asyncio.to_thread(session.llm_api.send, text, role)
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            if response is not None:
+                response["_processingMs"] = round(elapsed_ms)
             tui.reset_thinking(session.session_id)
-            print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} completed")
+            print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} completed in {elapsed_ms / 1000:.2f}s")
             return response
     except Exception as exc:
         print(f"⚠️ LLM[{req_id}] [{session.session_id}] {source} failed: {exc}")
@@ -504,50 +541,148 @@ async def _process_stt_message(session_id: str, msg: Dict[str, Any]) -> None:
         speech = str(msg["confirmedText"])
         print(f"🎤 [{session_id}] STT confirmed text -> LLM: {speech}")
         tui.update_stt(session_id, speech)
-        tui.log_device(session_id, f"🎤 {speech}")
+        duration_ms = msg.get("durationMs")
+        if duration_ms is None and session.stt_activity_started_at:
+            duration_ms = round((time.perf_counter() - session.stt_activity_started_at) * 1000)
+        if duration_ms is None:
+            duration_ms = msg.get("processingMs")
+        timing = f" total ({float(duration_ms) / 1000:.2f}s)" if duration_ms is not None else ""
+        tui.log_device(session_id, f"🎤 STT{timing}: {speech}")
+        session.stt_activity_started_at = 0.0
         response = await _call_llm(session, speech, "user", "stt")
         if response:
             await _handle_llm_response(session, response)
     elif msg.get("interimResult"):
         speech = str(msg["interimResult"])
+        if not session.stt_activity_started_at:
+            session.stt_activity_started_at = time.perf_counter()
         tui.update_stt(session_id, speech)
     await _update_frontend(speech, "user", complete)
 
 
 def _tts_callback(msg: Dict[str, Any]) -> None:
     request_id = str(msg.get("requestId", ""))
-    if request_id:
-        session = state.sessions.get(request_id)
+    session = state.sessions.get(request_id) if request_id else None
+    output = msg.get("output")
+    status = msg.get("tts")
+
+    if output == "local":
         if not session:
             return
-        if msg.get("audioStart"):
-            payload = msg["audioStart"]
-            sample_rate = int(payload.get("sampleRate", 16000)) if isinstance(payload, dict) else 16000
-            session.comm.send_audio_start(sample_rate)
-        elif msg.get("audio"):
-            try:
-                session.comm.send_audio(base64.b64decode(msg["audio"], validate=True))
-            except Exception as exc:
-                print(f"⚠️ [{request_id}] Invalid device TTS audio: {exc}")
-        elif msg.get("audioEnd"):
-            session.comm.send_audio_end()
-        elif isinstance(msg.get("tts"), str) and msg["tts"].startswith("error:"):
-            print(f"⚠️ [{request_id}] {msg['tts']}")
+        if status == "started":
+            session.local_tts_started_at = time.perf_counter()
             if session.stt:
+                session.stt.pause()
+        elif status == "stopped" or (isinstance(status, str) and status.startswith("error:")):
+            duration_ms = msg.get("totalDurationMs", msg.get("durationMs"))
+            if duration_ms is None and session.local_tts_started_at:
+                duration_ms = round((time.perf_counter() - session.local_tts_started_at) * 1000)
+            if duration_ms is not None:
+                tui.log_device(request_id, f"🔊 TTS total ({float(duration_ms) / 1000:.2f}s): {session.local_tts_text}")
+            session.local_tts_started_at = 0.0
+            session.local_tts_text = ""
+            if session.stt and not session.audio_mic_muted:
                 session.stt.resume()
         return
 
-    # TTS is currently global/disabled (see config.toml's ttsEnabled); when re-enabled, pause/resume
-    # every session's STT so the shared speaker output isn't picked back up by any mic.
-    status = msg.get("tts")
-    if status in ("started", "resumed"):
-        for session in state.sessions.values():
-            if session.stt:
-                session.stt.pause()
-    elif status in ("stopped", "paused"):
-        for session in state.sessions.values():
-            if session.stt:
+    if request_id:
+        if not session:
+            return
+        if msg.get("tts") == "started" and session.stt:
+            session.stt.pause()
+        if msg.get("audioStart"):
+            payload = msg["audioStart"]
+            sample_rate = int(payload.get("sampleRate", 16000)) if isinstance(payload, dict) else 16000
+            if not session.audio_speaker_muted:
+                session.comm.send_audio_start(sample_rate)
+        elif msg.get("audio"):
+            if not session.audio_speaker_muted:
+                try:
+                    session.comm.send_audio(base64.b64decode(msg["audio"], validate=True))
+                except Exception as exc:
+                    print(f"⚠️ [{request_id}] Invalid device TTS audio: {exc}")
+        elif msg.get("audioEnd"):
+            session.comm.send_audio_end()
+            duration_ms = msg.get("totalDurationMs", msg.get("durationMs"))
+            if duration_ms is not None:
+                tui.log_device(request_id, f"🔊 Device TTS total ({float(duration_ms) / 1000:.2f}s): {session.local_tts_text}")
+            if session.stt and not session.audio_mic_muted:
                 session.stt.resume()
+        elif isinstance(msg.get("tts"), str) and msg["tts"].startswith("error:"):
+            print(f"⚠️ [{request_id}] {msg['tts']}")
+            if session.stt and not session.audio_mic_muted:
+                session.stt.resume()
+        return
+
+    # Legacy TTS messages without a request id still pause/resume all active microphones.
+    if status in ("started", "resumed"):
+        for active_session in state.sessions.values():
+            if active_session.stt:
+                active_session.stt.pause()
+    elif status in ("stopped", "paused"):
+        for active_session in state.sessions.values():
+            if active_session.stt:
+                active_session.stt.resume()
+
+
+def _set_speaker_muted(session_id: str, muted: bool) -> None:
+    session = state.sessions.get(session_id)
+    if session is None:
+        return
+    session.audio_speaker_muted = muted
+    if muted and state.tts and session.audio_output_local:
+        state.tts.stop_local(session_id)
+    status = "muted" if muted else "unmuted"
+    print(f"🔊 [{session_id}] Speaker {status}.")
+    tui.log_device(session_id, f"🔊 Speaker {status}")
+
+
+def _set_mic_muted(session_id: str, muted: bool) -> None:
+    session = state.sessions.get(session_id)
+    if session is None:
+        return
+    session.audio_mic_muted = muted
+    if session.stt:
+        if muted:
+            session.stt.pause()
+        else:
+            session.stt.resume()
+    status = "muted" if muted else "unmuted"
+    print(f"🎙️ [{session_id}] Microphone {status}.")
+    tui.log_device(session_id, f"🎙️ Microphone {status}")
+
+
+def _set_audio_route(session_id: str, input_local: bool, output_local: bool) -> None:
+    session = state.sessions.get(session_id)
+    if session is None:
+        return
+
+    desired_input_local = bool(input_local)
+    desired_output_local = bool(output_local)
+    if session.kind != "WiFi":
+        desired_input_local = True
+        desired_output_local = True
+
+    input_changed = desired_input_local != session.audio_input_local
+    output_changed = desired_output_local != session.audio_output_local
+
+    if input_changed:
+        session.audio_input_local = desired_input_local
+        if session.stt:
+            session.stt.close()
+            session.stt = None
+        _start_session_stt(session, source="local" if session.audio_input_local else "remote")
+        if session.stt and session.audio_mic_muted:
+            session.stt.pause()
+        input_label = "local machine" if session.audio_input_local else "ESP32 device"
+        print(f"🎙️ [{session_id}] Audio input routed to {input_label}.")
+        tui.log_device(session_id, f"🎙️ Audio input route: {input_label}")
+
+    if output_changed:
+        session.audio_output_local = desired_output_local
+        output_label = "local machine" if session.audio_output_local else "ESP32 device"
+        print(f"🔊 [{session_id}] Audio output routed to {output_label}.")
+        tui.log_device(session_id, f"🔊 Audio output route: {output_label}")
 
 
 async def _push_device_config(session: DeviceSession) -> None:
@@ -569,7 +704,6 @@ async def _push_device_config(session: DeviceSession) -> None:
     payload = {
         "config": {
             "tools": tools,
-            "activeLanguage": state.config.get("activeLanguage", "en"),
             "volume": state.volume,
         }
     }
@@ -585,19 +719,17 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
     persona = device_info.get("persona")
     if isinstance(persona, str) and persona.strip():
         protocol = session.config.setdefault("conversationProtocol", [])
-        for msg in protocol:
-            if msg.get("role") == "system":
-                msg["content"] = persona.strip()
-                break
-        else:
-            protocol.insert(0, {"role": "system", "content": persona.strip()})
+        system_messages = [msg for msg in protocol if msg.get("role") == "system"]
+        protocol[:] = [msg for msg in protocol if msg.get("role") != "system"]
+        protocol[:0] = system_messages[:1]
+        protocol.insert(len(system_messages[:1]), {"role": "system", "content": persona.strip()})
         print(f"🧠 [{session.session_id}] Device system prompt installed: {persona.strip()!r}")
 
     history = device_info.get("history")
     if isinstance(history, list):
         protocol = session.config.setdefault("conversationProtocol", [])
-        system_msg = next((m for m in protocol if m.get("role") == "system"), None)
-        new_protocol = [system_msg] if system_msg else []
+        system_messages = [m for m in protocol if m.get("role") == "system"]
+        new_protocol = list(system_messages)
         for turn in history:
             if not isinstance(turn, dict):
                 continue
@@ -606,7 +738,7 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
             if role in ("user", "assistant") and content:
                 new_protocol.append({"role": role, "content": content})
         session.config["conversationProtocol"] = new_protocol
-        print(f"📜 [{session.session_id}] Device conversation history installed ({len(new_protocol) - (1 if system_msg else 0)} turn(s))")
+        print(f"📜 [{session.session_id}] Device conversation history installed ({len(new_protocol) - len(system_messages)} turn(s))")
 
     notification_guidance = device_info.get("notificationGuidance")
     if isinstance(notification_guidance, list):
@@ -620,10 +752,11 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
                 instructions.append(f"- Notification `{name}`: {instruction}")
         if instructions:
             protocol = session.config.setdefault("conversationProtocol", [])
-            system_msg = next((message for message in protocol if message.get("role") == "system"), None)
-            if system_msg is not None:
-                system_msg["content"] = (
-                    f"{str(system_msg.get('content', '')).rstrip()}\n\n"
+            system_messages = [message for message in protocol if message.get("role") == "system"]
+            device_system_msg = system_messages[-1] if system_messages else None
+            if device_system_msg is not None:
+                device_system_msg["content"] = (
+                    f"{str(device_system_msg.get('content', '')).rstrip()}\n\n"
                     "Device notification instructions:\n"
                     + "\n".join(instructions)
                 )
@@ -727,7 +860,7 @@ def _reload_runtime() -> None:
         state.sessions[session.session_id] = session
         tui.add_device_tab(session.session_id, kind="Serial")
         tui.update_session(session.session_id, kind="Serial", status=None if result.get("error") else "connected")
-        _start_session_stt(session, source="local")
+        _start_session_stt(session, source="local" if session.audio_input_local else "remote")
     else:
         print(f"📡 Waiting for WiFi device connections (up to {state.max_sessions})...")
 
@@ -740,7 +873,14 @@ def _reload_runtime() -> None:
 @app.on_event("startup")
 async def startup() -> None:
     state.loop = asyncio.get_running_loop()
-    asyncio.create_task(tui.start(port=BACKEND_PORT, on_quit=_request_shutdown, on_prompt=_submit_terminal_prompt))
+    asyncio.create_task(tui.start(
+        port=BACKEND_PORT,
+        on_quit=_request_shutdown,
+        on_prompt=_submit_terminal_prompt,
+        on_toggle_tts=_set_speaker_muted,
+        on_toggle_audio_route=_set_audio_route,
+        on_toggle_mic=_set_mic_muted,
+    ))
     _reload_runtime()
 
 
@@ -855,7 +995,7 @@ async def websocket_device(ws: WebSocket) -> None:
     tui.add_device_tab(session_id, kind="WiFi")
     tui.update_session(session_id, kind="WiFi", status="connected")
     tui.update_tools(session_id, [])
-    _start_session_stt(session, source="remote")
+    _start_session_stt(session, source="local" if session.audio_input_local else "remote")
     await _push_device_config(session)
 
     try:
@@ -866,7 +1006,7 @@ async def websocket_device(ws: WebSocket) -> None:
 
             audio_chunk = message.get("bytes")
             if audio_chunk is not None:
-                if session.stt and hasattr(session.stt, "push_audio"):
+                if not session.audio_input_local and session.stt and hasattr(session.stt, "push_audio"):
                     session.stt.push_audio(audio_chunk)
                 continue
 
@@ -881,11 +1021,11 @@ async def websocket_device(ws: WebSocket) -> None:
             notification = data.get("notification")
             if isinstance(notification, dict):
                 comm.receive(str(notification.get("name", "")), str(notification.get("value", "")))
-            elif data.get("mic") == "muted" and session.stt:
+            elif data.get("mic") == "muted" and session.stt and not session.audio_input_local:
                 session.stt.pause()
-            elif data.get("mic") == "unmuted" and session.stt:
+            elif data.get("mic") == "unmuted" and session.stt and not session.audio_input_local and not session.audio_mic_muted:
                 session.stt.resume()
-            elif data.get("audio") == "finished" and session.stt:
+            elif data.get("audio") == "finished" and session.stt and not session.audio_input_local and not session.audio_mic_muted:
                 session.stt.resume()
             elif isinstance(data.get("deviceInfo"), dict):
                 _apply_device_info(session, data["deviceInfo"])

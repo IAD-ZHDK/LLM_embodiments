@@ -8,7 +8,7 @@ import os
 import struct
 import sys
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -46,8 +46,11 @@ def _cuda_available() -> bool:
         return False
 
 
-def send_message(name: str, value: str) -> None:
-    print(json.dumps({name: value}))
+def send_message(name: str, value: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    payload: Dict[str, Any] = {name: value}
+    if metadata:
+        payload.update(metadata)
+    print(json.dumps(payload))
     sys.stdout.flush()
 
 
@@ -104,6 +107,9 @@ class WhisperSession:
         self.vad.min_speech_frames = 1
         self._buffer = bytearray()
         self._vad_buffer = bytearray()
+        self.last_processing_ms = 0.0
+        self.last_duration_ms = 0
+        self._utterance_started_at: Optional[float] = None
         self._speaking = False
         self._silence_since: Optional[float] = None
 
@@ -115,6 +121,8 @@ class WhisperSession:
             is_speech = self.vad.process(frame)
             now = time.monotonic()
             if is_speech:
+                if not self._speaking:
+                    self._utterance_started_at = now
                 self._buffer.extend(frame)
                 self._silence_since = None
                 self._speaking = True
@@ -132,14 +140,18 @@ class WhisperSession:
     def reset(self) -> None:
         self._buffer = bytearray()
         self._vad_buffer = bytearray()
+        self._utterance_started_at = None
         self._speaking = False
         self._silence_since = None
 
     def _finalize(self) -> Optional[str]:
         buffered, self._buffer = self._buffer, bytearray()
+        utterance_started_at = self._utterance_started_at
+        self._utterance_started_at = None
         if not buffered:
             return None
         audio_np = np.frombuffer(bytes(buffered), dtype=np.int16).astype(np.float32) / 32768.0
+        started_at = time.perf_counter()
         try:
             segments, _info = self.model.transcribe(
                 audio_np,
@@ -149,7 +161,11 @@ class WhisperSession:
                 vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
             )
             text = " ".join(segment.text.strip() for segment in segments).strip()
+            self.last_processing_ms = (time.perf_counter() - started_at) * 1000
+            self.last_duration_ms = round((time.monotonic() - utterance_started_at) * 1000) if utterance_started_at is not None else round(self.last_processing_ms)
         except Exception as exc:
+            self.last_processing_ms = (time.perf_counter() - started_at) * 1000
+            self.last_duration_ms = round((time.monotonic() - utterance_started_at) * 1000) if utterance_started_at is not None else round(self.last_processing_ms)
             print(f"Whisper transcription error: {exc}", file=sys.stderr)
             return None
         return text or None
@@ -251,7 +267,10 @@ def _run_whisper(model_name: str, device: str, compute_type: str, device_index: 
 
         text = session.push(body)
         if text:
-            send_message("confirmedText", text)
+            send_message("confirmedText", text, {
+                "processingMs": round(session.last_processing_ms),
+                "durationMs": session.last_duration_ms,
+            })
 
 
 def main() -> None:

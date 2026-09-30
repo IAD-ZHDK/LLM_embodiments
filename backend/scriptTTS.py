@@ -40,17 +40,26 @@ TTS_MODELS = {
 }
 
 MODEL_NAMES = list(TTS_MODELS.keys())
-playback_thread = None
 stop_event = threading.Event()
 pause_event = threading.Event()
 voice_cache = {}
 output_device = None
+playback_output = ""
+playback_request_id = ""
+active_request_id = ""
+tts_request_queue = queue.Queue()
+request_lock = threading.Lock()
+queued_request_counts = {}
+cancelled_request_ids = set()
+tts_queue_thread = None
 
-def send_message(name, value, request_id=""):
+def send_message(name, value, request_id="", extra=None):
     """Send JSON message to stdout"""
     msg = {name: value}
     if request_id:
         msg["requestId"] = request_id
+    if extra:
+        msg.update(extra)
     print(json.dumps(msg))
     sys.stdout.flush()
 
@@ -97,11 +106,12 @@ def extract_audio_from_chunk(audio_chunk):
     
     return None
 
-def stream_to_device(voice, text, request_id):
+def stream_to_device(voice, text, request_id, enqueued_at=None):
     """Emit Piper's mono signed-16-bit PCM in small frames for the backend WebSocket relay."""
     try:
+        started_at = time.perf_counter()
         sample_rate = int(voice.config.sample_rate)
-        send_message("tts", "started", request_id)
+        send_message("tts", "started", request_id, {"output": "device"})
         send_message("audioStart", {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}, request_id)
         for chunk in voice.synthesize(text):
             audio = extract_audio_from_chunk(chunk)
@@ -110,10 +120,16 @@ def stream_to_device(voice, text, request_id):
             for offset in range(0, len(audio), 4096):
                 encoded = base64.b64encode(audio[offset:offset + 4096]).decode("ascii")
                 send_message("audio", encoded, request_id)
-        send_message("audioEnd", True, request_id)
+        duration_ms = round((time.perf_counter() - started_at) * 1000)
+        total_duration_ms = round((time.perf_counter() - enqueued_at) * 1000) if enqueued_at is not None else duration_ms
+        send_message("audioEnd", True, request_id, {
+            "output": "device",
+            "durationMs": duration_ms,
+            "totalDurationMs": total_duration_ms,
+        })
     except Exception as e:
         print(f"TTS device-stream error: {e}", file=sys.stderr)
-        send_message("tts", f"error: {e}", request_id)
+        send_message("tts", f"error: {e}", request_id, {"output": "device"})
 
 def get_supported_sample_rate(device=None):
     """Find a supported sample rate for the device"""
@@ -137,10 +153,11 @@ def get_supported_sample_rate(device=None):
 import queue
 import threading
 
-def play_stream(voice, text, stop_event, pause_event, device=None):
+def play_stream(voice, text, stop_event, pause_event, device=None, request_id="", enqueued_at=None):
     """Play TTS audio stream"""
     try:
-        send_message("tts", "started")
+        playback_started = time.perf_counter()
+        send_message("tts", "started", request_id, {"output": "local"})
         synthesis_start = time.time()  # Start timing
         
         # Find a supported sample rate
@@ -367,11 +384,23 @@ def play_stream(voice, text, stop_event, pause_event, device=None):
         stream.stop()
         stream.close()
         sd.sleep(600)  # Small delay to ensure audio is fully played
-        send_message("tts", "stopped")
+        duration_ms = round((time.perf_counter() - playback_started) * 1000)
+        total_duration_ms = round((time.perf_counter() - enqueued_at) * 1000) if enqueued_at is not None else duration_ms
+        send_message("tts", "stopped", request_id, {
+            "output": "local",
+            "durationMs": duration_ms,
+            "totalDurationMs": total_duration_ms,
+        })
         
     except Exception as e:
         print(f"TTS playback error: {e}", file=sys.stderr)
-        send_message("tts", f"error: {e}")
+        duration_ms = round((time.perf_counter() - playback_started) * 1000) if "playback_started" in locals() else 0
+        total_duration_ms = round((time.perf_counter() - enqueued_at) * 1000) if enqueued_at is not None else duration_ms
+        send_message("tts", f"error: {e}", request_id, {
+            "output": "local",
+            "durationMs": duration_ms,
+            "totalDurationMs": total_duration_ms,
+        })
 
 def set_tts_volume(volume_level):
     """Set TTS volume (0-100)"""
@@ -384,9 +413,18 @@ def set_tts_volume(volume_level):
 
 def handle_command(cmd):
     """Handle TTS commands"""
-    global pause_event, tts_volume
+    global pause_event, stop_event, playback_output, playback_request_id, tts_volume
     
-    if isinstance(cmd, str):
+    if isinstance(cmd, dict) and cmd.get("tts") == "stop_local":
+        request_id = str(cmd.get("requestId", ""))
+        with request_lock:
+            if playback_output == "local" and request_id == active_request_id:
+                stop_event.set()
+                pause_event.clear()
+                print(f"Stopping local TTS playback for {request_id}", file=sys.stderr)
+            if queued_request_counts.get(request_id, 0):
+                cancelled_request_ids.add(request_id)
+    elif isinstance(cmd, str):
         if cmd == "pause":
             pause_event.set()
         elif cmd == "resume":
@@ -452,70 +490,128 @@ def resolve_tts_model_name(model_value):
 
     return None
 
+def _process_tts_queue():
+    """Synthesize and play one queued request at a time, in arrival order."""
+    global active_request_id, output_device, pause_event, playback_output
+    global playback_request_id, stop_event, tts_volume
+
+    while True:
+        request = tts_request_queue.get()
+        if request is None:
+            tts_request_queue.task_done()
+            return
+
+        request_id = request["requestId"]
+        output = request["output"]
+        with request_lock:
+            queued_count = queued_request_counts.get(request_id, 0) - 1
+            if queued_count > 0:
+                queued_request_counts[request_id] = queued_count
+            else:
+                queued_request_counts.pop(request_id, None)
+            cancelled = request_id in cancelled_request_ids
+            if cancelled and queued_count <= 0:
+                cancelled_request_ids.discard(request_id)
+            if not cancelled:
+                active_request_id = request_id
+                playback_output = output
+                playback_request_id = request_id
+                stop_event = threading.Event()
+                pause_event.clear()
+                request_stop_event = stop_event
+
+        if cancelled:
+            print(f"Skipping queued TTS for muted session {request_id}", file=sys.stderr)
+            tts_request_queue.task_done()
+            continue
+
+        try:
+            model_name = resolve_tts_model_name(request["model"])
+            if not request["text"] or not model_name:
+                continue
+            if output == "local" and output_device is None:
+                output_device = find_respeaker_device()
+            voice = get_voice(model_name)
+            tts_volume = request["volume"]
+            print(f"Synthesizing: {request['text']} (model: {model_name})", file=sys.stderr)
+            if output == "device":
+                stream_to_device(voice, request["text"], request_id, request["enqueuedAt"])
+            else:
+                play_stream(
+                    voice,
+                    request["text"],
+                    request_stop_event,
+                    pause_event,
+                    output_device,
+                    request_id,
+                    request["enqueuedAt"],
+                )
+        except Exception as exc:
+            print(f"Failed to process TTS request {request_id}: {exc}", file=sys.stderr)
+            send_message("tts", f"error: {exc}", request_id, {"output": output})
+        finally:
+            with request_lock:
+                if active_request_id == request_id:
+                    active_request_id = ""
+                    playback_output = ""
+                    playback_request_id = ""
+            tts_request_queue.task_done()
+
+
 def main():
-    """Main TTS loop"""
-    global playback_thread, stop_event, pause_event, output_device
-    
+    """Read TTS commands and enqueue speech requests for serialized playback."""
+    global tts_queue_thread
+
     print("Ready for text input...", file=sys.stderr)
-    
+    tts_queue_thread = threading.Thread(target=_process_tts_queue, daemon=True)
+    tts_queue_thread.start()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-            
+
         try:
-            # Parse JSON or use raw text
             try:
                 msg = json.loads(line)
-            except:
+            except json.JSONDecodeError:
                 msg = {}
-            
-            # Handle commands
+
             if isinstance(msg, dict):
                 if "tts" in msg:
-                    handle_command(msg["tts"])
+                    handle_command(msg if msg["tts"] == "stop_local" else msg["tts"])
                     continue
-                if any(key in msg for key in ["volume", "volume_change", "volume_get"]):
+                if any(key in msg for key in ("volume", "volume_change", "volume_get")):
                     handle_command(msg)
                     continue
-            
-            # Handle TTS request
+
             text = msg.get("text", "") if isinstance(msg, dict) else line
             raw_model = msg.get("model", MODEL_NAMES[0]) if isinstance(msg, dict) else MODEL_NAMES[0]
             output = msg.get("output", "local") if isinstance(msg, dict) else "local"
-            request_id = msg.get("requestId", "") if isinstance(msg, dict) else ""
-            if output == "local" and output_device is None:
-                output_device = find_respeaker_device()
+            request_id = str(msg.get("requestId", "")) if isinstance(msg, dict) else ""
             model_name = resolve_tts_model_name(raw_model)
-
             if not text or not model_name:
                 continue
 
-            try:
-                voice = get_voice(model_name)
-            except (FileNotFoundError, Exception) as e:
-                print(f"Failed to load voice model {model_name}: {e}", file=sys.stderr)
-                send_message("tts", f"error: Could not load voice model. Try: pip install piper-tts --force-reinstall")
-                continue
-            
-            print(f"Synthesizing: {text} (model: {model_name})", file=sys.stderr)
-            
-            # Stop current playback and start new one
-            if playback_thread and playback_thread.is_alive():
-                stop_event.set()
-                playback_thread.join()
-            
-            stop_event = threading.Event()
-            pause_event.clear()
-            target = stream_to_device if output == "device" else play_stream
-            args = (voice, text, request_id) if output == "device" else (voice, text, stop_event, pause_event, output_device)
-            playback_thread = threading.Thread(target=target, args=args)
-            playback_thread.start()
-            
-            
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            send_message("tts", f"error: {e}")
+            request = {
+                "text": text,
+                "model": model_name,
+                "output": output,
+                "requestId": request_id,
+                "volume": tts_volume,
+                "enqueuedAt": time.perf_counter(),
+            }
+            with request_lock:
+                queued_request_counts[request_id] = queued_request_counts.get(request_id, 0) + 1
+            tts_request_queue.put(request)
+            print(f"Queued TTS request {request_id}; waiting={tts_request_queue.qsize() - 1}", file=sys.stderr)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            send_message("tts", f"error: {exc}")
+
+    tts_request_queue.put(None)
+    tts_request_queue.join()
+    tts_queue_thread.join()
 
 if __name__ == "__main__":
     main()

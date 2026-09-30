@@ -7,7 +7,6 @@ from typing import Any, Dict
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "activeLanguage": "en",
     "maxDeviceSessions": 10,
     "ttsEnabled": False,
     "deviceResponseDisplay": True,
@@ -20,16 +19,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "computeType": "auto",  # "auto" | "int8" | "float16" | "float32"
             "language": "auto",    # "auto" | "en" | "de" - forcing a language skips detection and is faster
         },
-        "languageProfiles": {
-            "en": {
-                "speechToTextModel": "vosk-model-small-en-us-0.15",
-                "textToSpeechModel": "en_GB-alan-low.onnx",
-            },
-            "de": {
-                "speechToTextModel": "vosk-model-small-de-0.15",
-                "textToSpeechModel": "de_DE-thorsten-medium.onnx",
-            },
-        },
+        "speechToTextModel": "vosk-model-small-en-us-0.15",
+        "textToSpeechModel": "en_GB-alan-low.onnx",
     },
     "llmSettings": {
         "provider": "ollama",

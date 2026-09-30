@@ -11,10 +11,11 @@ from typing import Callable, Dict, Optional
 from rich.cells import cell_len
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import Checkbox, DataTable, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
 
 
 class SelectableRichLog(RichLog):
@@ -53,6 +54,14 @@ class SelectableRichLog(RichLog):
         self.refresh()
 
 
+class DeviceCheckbox(Checkbox):
+    @property
+    def _button(self) -> Content:
+        mark = "X" if self.value else " "
+        indicator = Content.from_text(f"[{mark}]", markup=False)
+        return indicator.stylize_before(self.get_visual_style("toggle--button"))
+
+
 def _local_ip() -> str:
     # A UDP "connect" never sends a packet; it just asks the OS which local interface would route there.
     try:
@@ -87,27 +96,62 @@ class TerminalUI(App):
 
     CSS = """
     Horizontal { height: 1fr; }
-    #console { width: 1fr; border: solid $accent; }
-    #right { width: 1fr; }
-    #banner { height: 4; content-align: center middle; background: $accent; }
-    #main-sessions { height: 1fr; border: solid $accent; }
+    #tabs { height: 1fr; }
+    TabPane { height: 1fr; }
+        .overview-content { height: 1fr; }
+    #console-pane { width: 1fr; height: 1fr; }
+    #console { width: 1fr; height: 1fr; border: solid $accent; }
+    #overview-right { width: 1fr; height: 1fr; }
+    #overview-scroll { height: 1fr; }
+    .device-content { width: 1fr; height: 1fr; }
+    .device-sidebar { width: 2fr; min-width: 28; height: 1fr; }
+    .device-log-column { width: 3fr; min-width: 32; height: 1fr; }
+    #toolbar { height: 4; }
+    #banner { width: 1fr; height: 4; content-align: center middle; background: $accent; }
+    .audio-controls { height: 3; }
+    .audio-controls-row { height: 1; }
+    .pane-heading { height: 1; text-style: bold; color: $accent; }
+    .audio-controls Checkbox {
+        width: 1fr;
+        height: 1;
+        border: none;
+        padding: 0;
+        background: transparent;
+    }
+    #main-sessions { height: auto; min-height: 8; border: solid $accent; }
     #prompt-input { height: 3; }
     .device-status { height: 3; border: solid $accent; padding: 0 1; }
-    .device-tools { height: 8; border: solid $accent; padding: 1; overflow-y: auto; }
+    .device-tools { height: auto; min-height: 5; border: solid $accent; padding: 1; }
     .device-now-playing { height: auto; border: solid $accent; padding: 1; }
-    .device-log { height: 1fr; border: solid $accent; }
+    .device-log { width: 1fr; height: 1fr; min-height: 8; border: solid $accent; }
     """
     BINDINGS = [
         ("q", "quit_app", "Quit"),
         ("ctrl+c", "quit_app", "Copy selection / Quit"),
     ]
 
-    def __init__(self, host: str, port: int, on_quit=None, on_prompt: Optional[Callable[[Optional[str], str], None]] = None) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        on_quit=None,
+        on_prompt: Optional[Callable[[Optional[str], str], None]] = None,
+        on_toggle_tts: Optional[Callable[[str, bool], None]] = None,
+        on_toggle_audio_route: Optional[Callable[[str, bool, bool], None]] = None,
+        on_toggle_mic: Optional[Callable[[str, bool], None]] = None,
+    ) -> None:
         super().__init__()
         self.host = host
         self.port = port
         self._on_quit = on_quit
         self._on_prompt = on_prompt
+        self._on_toggle_tts = on_toggle_tts
+        self._on_toggle_audio_route = on_toggle_audio_route
+        self._on_toggle_mic = on_toggle_mic
+        self._mic_muted: Dict[str, bool] = {}
+        self._speaker_muted: Dict[str, bool] = {}
+        self._audio_input_local: Dict[str, bool] = {}
+        self._audio_output_local: Dict[str, bool] = {}
         self.model_summary = _model_summary
         self.sessions: Dict[str, SessionInfo] = {}
         self.device_tools: Dict[str, list] = {}
@@ -123,13 +167,18 @@ class TerminalUI(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal():
-            yield SelectableRichLog(id="console", highlight=True, markup=False, wrap=True, max_lines=5000)
-            with Vertical(id="right"):
-                yield Static("", id="banner")
-                with TabbedContent(id="tabs"):
-                    with TabPane("Main", id="tab-main"):
-                        yield DataTable(id="main-sessions")
+        with TabbedContent(id="tabs"):
+            with TabPane("Overview", id="tab-main"):
+                with Horizontal(classes="overview-content"):
+                    with Vertical(id="console-pane"):
+                        yield Static("Global Console", classes="pane-heading")
+                        yield SelectableRichLog(id="console", highlight=True, markup=False, wrap=True, min_width=0, max_lines=5000)
+                    with Vertical(id="overview-right"):
+                        with Horizontal(id="toolbar"):
+                            yield Static("", id="banner")
+                        with VerticalScroll(id="overview-scroll"):
+                            yield Static("Connected devices", classes="pane-heading")
+                            yield DataTable(id="main-sessions")
         yield Input(placeholder="Type a prompt and press Enter (targets the active device tab)", id="prompt-input")
         yield Footer()
 
@@ -167,6 +216,35 @@ class TerminalUI(App):
         event.input.value = ""
         if self._on_prompt:
             self._on_prompt(self._active_device_session_id(), prompt)
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        checkbox_id = event.checkbox.id or ""
+        selected = bool(event.value)
+        if checkbox_id.startswith("audio-in-local-"):
+            session_id = checkbox_id[len("audio-in-local-"):]
+            self._audio_input_local[session_id] = selected
+            self._emit_audio_route_change(session_id)
+        elif checkbox_id.startswith("audio-out-local-"):
+            session_id = checkbox_id[len("audio-out-local-"):]
+            self._audio_output_local[session_id] = selected
+            self._emit_audio_route_change(session_id)
+        elif checkbox_id.startswith("mic-mute-"):
+            session_id = checkbox_id[len("mic-mute-"):]
+            self._mic_muted[session_id] = selected
+            if self._on_toggle_mic:
+                self._on_toggle_mic(session_id, selected)
+        elif checkbox_id.startswith("speaker-mute-"):
+            session_id = checkbox_id[len("speaker-mute-"):]
+            self._speaker_muted[session_id] = selected
+            if self._on_toggle_tts:
+                self._on_toggle_tts(session_id, selected)
+
+    def _emit_audio_route_change(self, session_id: str) -> None:
+        if not self._on_toggle_audio_route:
+            return
+        in_local = self._audio_input_local.get(session_id, False)
+        out_local = self._audio_output_local.get(session_id, True)
+        self._on_toggle_audio_route(session_id, in_local, out_local)
 
     def update_model_summary(self, summary: str) -> None:
         if threading.get_ident() != self._main_thread_id:
@@ -284,17 +362,49 @@ class TerminalUI(App):
             tabs = self.query_one("#tabs", TabbedContent)
         except Exception:
             return
+        default_in_local = kind != "WiFi"
+        default_out_local = kind != "WiFi"
         pane = TabPane(
-            session_id,
-            Vertical(
-                Static(f"Kind: {kind} | Status: connected", id=f"status-{session_id}", classes="device-status"),
-                Static("Available tools\n(none yet)", id=f"tools-{session_id}", classes="device-tools"),
-                Static("", id=f"now-{session_id}", classes="device-now-playing"),
-                SelectableRichLog(id=f"log-{session_id}", classes="device-log", max_lines=500, wrap=True, markup=False, highlight=True),
+            f"Device {session_id}",
+            Horizontal(
+                VerticalScroll(
+                Vertical(
+                    Vertical(
+                        Static("Audio routing", classes="pane-heading"),
+                        Horizontal(
+                            DeviceCheckbox("Local audio in", value=default_in_local, id=f"audio-in-local-{session_id}"),
+                            DeviceCheckbox("Mute mic", id=f"mic-mute-{session_id}"),
+                            classes="audio-controls-row",
+                        ),
+                        Horizontal(
+                            DeviceCheckbox("Local audio out", value=default_out_local, id=f"audio-out-local-{session_id}"),
+                            DeviceCheckbox("Mute speaker", id=f"speaker-mute-{session_id}"),
+                            classes="audio-controls-row",
+                        ),
+                        classes="audio-controls",
+                    ),
+                        Static("Connection", classes="pane-heading"),
+                    Static(f"Kind: {kind} | Status: connected", id=f"status-{session_id}", classes="device-status"),
+                        Static("Tools", classes="pane-heading"),
+                    Static("Available tools\n(none yet)", id=f"tools-{session_id}", classes="device-tools"),
+                        Static("Now playing", classes="pane-heading"),
+                    Static("", id=f"now-{session_id}", classes="device-now-playing"),
+                ),
+                id=f"scroll-{session_id}",
+                classes="device-sidebar",
+                ),
+                Vertical(
+                    Static("Device log", classes="pane-heading"),
+                    SelectableRichLog(id=f"log-{session_id}", classes="device-log", max_lines=500, wrap=True, min_width=0, markup=False, highlight=True),
+                    classes="device-log-column",
+                ),
+                classes="device-content",
             ),
             id=self._tab_id(session_id),
         )
         tabs.add_pane(pane)
+        self._audio_input_local[session_id] = default_in_local
+        self._audio_output_local[session_id] = default_out_local
         self._device_order.append(session_id)
         self._refresh_device_now_playing(session_id)
         self._refresh_device_tools(session_id)
@@ -317,6 +427,10 @@ class TerminalUI(App):
         self.device_response.pop(session_id, None)
         self._thinking_seen.pop(session_id, None)
         self._thinking_buffer.pop(session_id, None)
+        self._mic_muted.pop(session_id, None)
+        self._speaker_muted.pop(session_id, None)
+        self._audio_input_local.pop(session_id, None)
+        self._audio_output_local.pop(session_id, None)
 
     def clear_devices(self) -> None:
         if threading.get_ident() != self._main_thread_id:
@@ -515,12 +629,28 @@ def _tui_print(*args, **kwargs) -> None:
         _original_print(*args, **kwargs)
 
 
-async def start(host: Optional[str] = None, port: int = 0, on_quit=None, on_prompt: Optional[Callable[[Optional[str], str], None]] = None) -> None:
+async def start(
+    host: Optional[str] = None,
+    port: int = 0,
+    on_quit=None,
+    on_prompt: Optional[Callable[[Optional[str], str], None]] = None,
+    on_toggle_tts: Optional[Callable[[str, bool], None]] = None,
+    on_toggle_audio_route: Optional[Callable[[str, bool, bool], None]] = None,
+    on_toggle_mic: Optional[Callable[[str, bool], None]] = None,
+) -> None:
     """Run the Textual UI on the current asyncio loop; print() is rerouted into its log pane."""
     global _app, _original_print
     import builtins
 
-    _app = TerminalUI(host or _local_ip(), port, on_quit=on_quit, on_prompt=on_prompt)
+    _app = TerminalUI(
+        host or _local_ip(),
+        port,
+        on_quit=on_quit,
+        on_prompt=on_prompt,
+        on_toggle_tts=on_toggle_tts,
+        on_toggle_audio_route=on_toggle_audio_route,
+        on_toggle_mic=on_toggle_mic,
+    )
     _original_print = builtins.print
     builtins.print = _tui_print
     try:

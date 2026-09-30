@@ -278,6 +278,8 @@ class LLMAPI:
             "messages": messages,
             "options": options,
         }
+        if "think" in settings:
+            payload["think"] = settings["think"]
         if include_tools:
             payload["tools"] = self._tools_for_prompt()
         return payload

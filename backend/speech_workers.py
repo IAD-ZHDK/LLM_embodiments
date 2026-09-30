@@ -159,6 +159,9 @@ class TextToSpeechWorker:
     def resume(self) -> None:
         self._send({"tts": "resume"})
 
+    def stop_local(self, request_id: str) -> None:
+        self._send({"tts": "stop_local", "requestId": request_id})
+
     def _send(self, obj: Dict[str, Any]) -> None:
         if self.proc.stdin:
             self.proc.stdin.write(json.dumps(obj) + "\n")

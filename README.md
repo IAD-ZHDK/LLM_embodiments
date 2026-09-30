@@ -135,7 +135,7 @@ models, set as `speechToTextModel` in [config.toml](config.toml):
 - Single consumer GPU (~6-8 GB VRAM): `small` or `medium`
 - Higher-end GPU (~10 GB+ VRAM): `large-v3` for the best accuracy
 
-Set the STT model name in [config.toml](config.toml) under the active language profile (folder name for Vosk, model name for Whisper).
+Set the STT model name in [config.toml](config.toml) as `speechToTextModel` (folder name for Vosk, model name for Whisper). A multilingual Whisper model like `small` handles English and German in one model, so there's no per-language STT setting.
 
 #### 3) Install TTS models (Piper)
 
@@ -148,25 +148,17 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/lo
 wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
 ```
 
-Set the TTS model file name in [config.toml](config.toml) under the active language profile.
+Set the TTS model file name in [config.toml](config.toml) as `textToSpeechModel`.
 
-#### 4) Select language profile
+#### 4) Select the STT/TTS models
 
-To switch language for STT and TTS together, change `activeLanguage` in [config.toml](config.toml) and restart:
+Set the model names directly in [config.toml](config.toml) and restart:
 
 ```toml
-activeLanguage = "en"  # or "de"
-
 [speech]
 sttBackend = "vosk"  # or "whisper"
-
-[speech.languageProfiles.en]
 speechToTextModel = "vosk-model-small-en-us-0.15"
 textToSpeechModel = "en_GB-alan-low.onnx"
-
-[speech.languageProfiles.de]
-speechToTextModel = "vosk-model-small-de-0.15"
-textToSpeechModel = "de_DE-thorsten-medium.onnx"
 ```
 
 Use model names directly (no numeric indexing).
@@ -281,24 +273,8 @@ chmod +x run.sh
 ./run.sh
 ```
 
-### Debugging with terminal 
-
-- Open a websocket connection
-```bash
-  wscat -c ws://localhost:3000
-```
-
-- Type a command to pause speech detection, or send text directly to the LLM
-```bash
-{"command":"protocol"}
-{"command":"sendMessage","message":"Hello from the terminal!"}
-```
-
 ###  Todo
 
-- Auto.restart when Arduino disconnected 
 - Recent changes to LLM API for images: fix needed
-- add physical button to restart whole application 
-- BLE integration 
 
 

@@ -69,13 +69,13 @@ Terminal output (console log, connected sessions, live STT/prompt/response) is r
 - `speech_workers.py` — spawns `scriptSTT.py`/`scriptTTS.py`/`scriptRemoteSTT.py` as subprocesses under `backend/`. Communication is line-delimited JSON over stdio (or length-prefixed binary frames for remote audio). TTS start/stop events call back into `state.stt.pause()/resume()` to prevent echo.
 - `tui.py` — Textual-based terminal UI: scrolling console log (via a `print()` monkey-patch, since Textual's own renderer also uses `sys.stdout` and can't be redirected) and a sticky sidebar showing connected sessions plus live STT/prompt/response.
 - `scriptSTT.py`, `scriptTTS.py`, `scriptRemoteSTT.py`, `model_downloader.py`, `Microphone/` — STT/TTS worker scripts and helpers, run as subprocesses (not imported as a package).
-- `STTmodels/`, `TTSmodels/` — gitignored. Drop model folders/files here. Set the active name in `config.toml` under `speech.languageProfiles[lang].speechToTextModel` / `textToSpeechModel`.
+- `STTmodels/`, `TTSmodels/` — gitignored. Drop model folders/files here. Set the active name in `config.toml` under `speech.speechToTextModel` / `speech.textToSpeechModel`.
 
 ### Config (`config.toml`)
 
 Single user-facing config, loaded via Python's stdlib `tomllib`:
 
-- `activeLanguage` + `speech.languageProfiles` — pick STT + TTS together.
+- `speech.speechToTextModel` / `speech.textToSpeechModel` — single STT model (multilingual Whisper models cover en/de together) and single TTS voice model.
 - `communicationMethod` — `"Serial"`, `"BLE"`, or `"WiFi"` (see `ArduinoExample/WiFi/M5StackExample`).
 - `llmSettings.provider` — `ollama` or `openai`.
 - `llmSettings.aiHatPlus` — auto-routes to a local OpenAI-compatible endpoint when a Hailo device is detected.
@@ -89,12 +89,12 @@ Single user-facing config, loaded via Python's stdlib `tomllib`:
 - Backend state lives in `backend.server.state` (module-level singleton). WebSocket callbacks submit coroutines back to the FastAPI loop via `_submit()` + `asyncio.run_coroutine_threadsafe`.
 - LLM calls are serialized per session through `session.lock` (so devices don't block each other) and tagged with a `llm_seq` request id for log correlation.
 - New functions go in `config.toml` under `functions.tools`. For device calls add a matching `deviceCommand` or a method on `SerialCommunication`/`DeviceWebSocketCommunication`.
-- New language: add a key under `speech.languageProfiles` and the model folders under `backend/STTmodels` / `backend/TTSmodels`.
+- New language: for TTS, add a voice model file under `backend/TTSmodels` and point `speech.textToSpeechModel` at it; STT already covers multiple languages via a single multilingual Whisper model.
 - A WiFi device (M5Stack) can declare its own tools/persona at connect time via a `deviceInfo` message (see `function_handler.register_device_tools` and `server._apply_device_info`) instead of `config.toml`.
 
 ## Common pitfalls
 
-- `config.toml` is loaded via Python's stdlib `tomllib` (Python 3.11+). Keep it valid TOML — tables use `[section]` headers, lists of objects use `[[section]]` repeated headers, multi-line strings use triple-quoted `"""..."""`. A bare key/value placed after a `[table]` header (with no reset) gets silently nested INTO that table instead of root scope — this has bitten this project before (`communicationMethod`/`volume` ended up nested under `[speech.languageProfiles.de]`); keep root-level keys before the first `[table]` header.
+- `config.toml` is loaded via Python's stdlib `tomllib` (Python 3.11+). Keep it valid TOML — tables use `[section]` headers, lists of objects use `[[section]]` repeated headers, multi-line strings use triple-quoted `"""..."""`. A bare key/value placed after a `[table]` header (with no reset) gets silently nested INTO that table instead of root scope; keep root-level keys before the first `[table]` header.
 - Port 3000 must be free; `run.sh` kills stale listeners, but external servers will conflict.
 - Vosk model names in `config.toml` are folder names under `backend/STTmodels`, not numeric indexes.
 - AI HAT+ auto-routing silently overrides `llmSettings.url` if a Hailo device is detected and `aiHatPlus.preferWhenAvailable` is true.

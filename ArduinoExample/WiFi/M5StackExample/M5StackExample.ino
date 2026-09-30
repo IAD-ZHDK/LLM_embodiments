@@ -11,7 +11,7 @@
 //      MCP-style name/description/dataType shape used by config.toml's functions.tools.
 //   4. Write your own notification checks, like checkShake() below, and call them from loop().
 //      Use BackendComm::sendNotification(name, value) to report a sensor/button event to the model.
-#include "BackendComm.h"
+#include "src/BackendComm.h"
 
 // --- Device state ---
 bool soundOn = false;

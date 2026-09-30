@@ -2,9 +2,6 @@
 # Python's stdlib tomllib —
 # Edit values below and restart the backend to apply.
 
-# Active language profile used for both STT and TTS.
-activeLanguage = "en"  # "en" or "de"
-
 # Full list of Vosk models can be found here: https://alphacephei.com/vosk/models
 # notifyTTS = true  # if enabled, send a notification to the Arduino
 # muteMicrophone = true  # optional to turn off microphone input permanently
@@ -17,13 +14,12 @@ communicationMethod = "WiFi"  # "Serial", "BLE", or "WiFi" (e.g. ArduinoExample/
 # conversation history, and STT session, so they don't interfere with each other.
 maxDeviceSessions = 10
 
-# TTS is off by default while multi-device support is new: there is currently one shared audio
-# output on this machine, which doesn't map cleanly onto several simultaneously connected devices.
-# A future version may stream synthesized speech back to a specific device's own speaker instead.
-ttsEnabled = false
+# Global text to speech operation flag
+ttsEnabled = true
 
-# WiFi-device output. These work without local computer audio playback.
+# Global send assistant response text to the WiFi device (for example, its display).
 deviceResponseDisplay = true
+# Global stream Piper-generated speech to the WiFi device's speaker.
 deviceTtsEnabled = true
 
 # Only used to document the device's own bootstrap settings when communicationMethod = "WiFi".
@@ -40,6 +36,8 @@ deviceTtsEnabled = true
 # and (in a future version) multiple simultaneous transcription sessions. No streaming partials; it
 # transcribes each utterance after a short pause using the same voice-activity detection as "vosk".
 sttBackend = "whisper"  # "vosk" | "whisper"
+speechToTextModel = "small"  # Whisper model name (sttBackend = "whisper"); use a Vosk model folder for sttBackend = "vosk"
+textToSpeechModel = "en_GB-alan-low.onnx"
 
 # Only used when sttBackend = "whisper". Ignored otherwise.
 [speech.whisper]
@@ -47,10 +45,11 @@ device = "auto"       # "auto" | "cpu" | "cuda" - "auto" falls back to CPU when 
 deviceIndex = 0        # Which GPU to use when device resolves to "cuda" (e.g. 1 for a second card).
 # Set this per instance/session once multiple simultaneous transcriptions across several GPUs are supported.
 computeType = "auto"  # "auto" | "int8" | "float16" | "float32" - "auto" picks float16 on GPU, int8 on CPU
-language = "auto"      # "auto" detects the spoken language; set "en" or "de" to skip detection and speed things up
+language = "en"      # "auto" detects the spoken language; set "en" or "de" to skip detection and speed things up
 
-# Use explicit model names for each language profile. Vosk models are downloaded to backend/STTmodels/;
-# Whisper models are downloaded automatically by faster-whisper on first use and cached locally.
+# Single STT model name for both languages (multilingual Whisper models like "small" handle en/de
+# in the same model). Vosk models are downloaded to backend/STTmodels/; Whisper models are
+# downloaded automatically by faster-whisper on first use and cached locally.
 #
 # Suggested Whisper models (used only when sttBackend = "whisper"):
 # - English only, fastest/smallest: "tiny.en", "base.en", "small.en", "medium.en"
@@ -59,13 +58,6 @@ language = "auto"      # "auto" detects the spoken language; set "en" or "de" to
 # - Raspberry Pi / CPU-only: "tiny" or "tiny.en" - anything larger will be too slow without a GPU.
 # - Single consumer GPU (~6-8 GB VRAM): "small" or "medium" for a good accuracy/speed balance.
 # - Higher-end GPU (~10 GB+ VRAM): "large-v3" for the best accuracy.
-[speech.languageProfiles.en]
-speechToTextModel = "small"  # Whisper model name (sttBackend = "whisper"); use "vosk-model-small-en-us-0.15" for sttBackend = "vosk"
-textToSpeechModel = "en_GB-alan-low.onnx"
-
-[speech.languageProfiles.de]
-speechToTextModel = "small"  # Whisper model name (multilingual, sttBackend = "whisper"); use "vosk-model-small-de-0.15" for sttBackend = "vosk"
-textToSpeechModel = "de_DE-thorsten-medium.onnx"
 
 [llmSettings]
 # Many of these settings are overridden by settings on the arduino device itself, which are sent to the backend via a `deviceInfo` message on connect.
@@ -75,6 +67,9 @@ frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
 model = "gemma4:e4b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:minio
 max_tokens = 4096  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
+# Ollama only: lower reasoning effort for models that support levels (for example, Gemma 4).
+# This is a preference, not a strict token or time limit; use false to disable thinking.
+think = "low"
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
 url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint
 
@@ -117,14 +112,14 @@ stripPseudoToolCalls = true
 # Safety: only known configured functions are eligible.
 executeInlinePseudoCalls = true
 
-# Always-present backend-only test tool. It does not require a connected device.
+# backend-only test of toolcall.
 [functions.tools.watermelon_test]
 description = "Test tool call. Call this exactly once when the user says 'watermelon go go'. Set value to the requested number of watermelons, or 3 when no number is requested."
 target = "notification"
 commType = "read"
 dataType = "integer"
 
-# Assistant messages help store prior responses.
+# Global instructions apply to every device and come before any device-specific persona.
 [[conversationProtocol]]
 role = "system"
-content = "You are an annoying, rude assistant with a sharp tongue. Stay in character for every reply. Keep normal chat replies short and direct. Use the provided tools whenever they fit the situation — either because the user asked, or because your own character calls for it. When the user says 'watermelon go go', you must call watermelon_test exactly once with an integer value: use the number the user requests, or 3 when they do not provide one. For greetings, identity questions, and general conversation, answer as plain text in character and do NOT output JSON, code fences, or function-call objects."
+content = "Respond in plain text with normal punctuation. Do not use markdown formatting, asterisks, emojis, or other decorative special symbols in responses."
