@@ -34,6 +34,7 @@ namespace BackendComm
     static WebSocketsClient webSocket;
 
     static bool micMuted = false;
+    static bool speakerMuted = false;
     static bool deviceSpeaking = false;
     static bool audioStreamEnded = false;
     static bool useAnalogMic = false;
@@ -168,9 +169,9 @@ namespace BackendComm
         M5.Mic.config(micConfig);
     }
 
-    inline void playTone(uint32_t frequency, uint32_t durationMs)
+    // CoreS3 routes its ES7210 microphones and AW88298 speaker over the same I2S clocks.
+    inline void _beginToneOutput()
     {
-        // CoreS3 routes its ES7210 microphones and AW88298 speaker over the same I2S clocks.
         if (!useAnalogMic && M5.Mic.isEnabled())
         {
             while (M5.Mic.isRecording())
@@ -180,13 +181,63 @@ namespace BackendComm
         M5.Speaker.begin();
         M5.Speaker.setVolume(180);
         M5.Speaker.setChannelVolume(kToneChannel, kToneVolume);
-        uint32_t clampedFrequency = constrain(frequency, 60UL, 4000UL);
-        size_t samples = min(static_cast<size_t>((durationMs * kSampleRate) / 1000UL), sizeof(toneBuffer) / sizeof(toneBuffer[0]));
-        for (size_t index = 0; index < samples; index++)
-            toneBuffer[index] = static_cast<int16_t>(sinf(2.0f * PI * clampedFrequency * index / kSampleRate) * 32767.0f);
-        M5.Speaker.playRaw(toneBuffer, samples, kSampleRate, false, 1, kToneChannel, true);
-        Serial.printf("[Speaker] Sine tone %luHz for %lums.\n", (unsigned long)clampedFrequency, (unsigned long)durationMs);
-        micResumeAt = millis() + durationMs + 50;
+    }
+
+    // frequency == 0 plays silence instead of a tone, so sequences can include pauses.
+    inline void _playToneSegment(uint32_t frequency, uint32_t durationMs)
+    {
+        if (frequency > 0)
+        {
+            uint32_t clampedFrequency = constrain(frequency, 60UL, 4000UL);
+            size_t samples = min(static_cast<size_t>((durationMs * kSampleRate) / 1000UL), sizeof(toneBuffer) / sizeof(toneBuffer[0]));
+            for (size_t index = 0; index < samples; index++)
+                toneBuffer[index] = static_cast<int16_t>(sinf(2.0f * PI * clampedFrequency * index / kSampleRate) * 32767.0f);
+            M5.Speaker.playRaw(toneBuffer, samples, kSampleRate, false, 1, kToneChannel, true);
+            Serial.printf("[Speaker] Sine tone %luHz for %lums.\n", (unsigned long)clampedFrequency, (unsigned long)durationMs);
+        }
+        else
+        {
+            Serial.printf("[Speaker] Pause for %lums.\n", (unsigned long)durationMs);
+        }
+        // Blocks for the segment's duration so the shared tone buffer isn't overwritten mid-playback.
+        M5.delay(durationMs);
+    }
+
+    inline void playTone(uint32_t frequency, uint32_t durationMs)
+    {
+        _beginToneOutput();
+        _playToneSegment(frequency, durationMs);
+        micResumeAt = millis() + 50;
+    }
+
+    // Plays a comma-separated list of "frequency:durationMs" segments, e.g. "880:200,:100,660:200".
+    // Leave frequency blank (":100") for a silent pause. A segment with no ":" is treated as a
+    // frequency alone, played for a default 500ms.
+    inline void playToneSequence(const String &sequence)
+    {
+        _beginToneOutput();
+        int start = 0;
+        while (start < (int)sequence.length())
+        {
+            int comma = sequence.indexOf(',', start);
+            String token = comma == -1 ? sequence.substring(start) : sequence.substring(start, comma);
+            token.trim();
+            if (token.length())
+            {
+                int colon = token.indexOf(':');
+                String freqPart = colon == -1 ? token : token.substring(0, colon);
+                String durPart = colon == -1 ? String("") : token.substring(colon + 1);
+                freqPart.trim();
+                durPart.trim();
+                uint32_t frequency = freqPart.length() ? (uint32_t)freqPart.toInt() : 0;
+                uint32_t durationMs = durPart.length() ? (uint32_t)durPart.toInt() : 500;
+                _playToneSegment(frequency, durationMs);
+            }
+            if (comma == -1)
+                break;
+            start = comma + 1;
+        }
+        micResumeAt = millis() + 50;
     }
 
     inline void _restoreMicAfterTone()
@@ -215,13 +266,31 @@ namespace BackendComm
         webSocket.sendTXT(payload);
     }
 
-    inline void _sendMicState()
+    inline void _sendAudioMuteState()
     {
         JsonDocument doc;
-        doc["mic"] = micMuted ? "muted" : "unmuted";
+        doc["audioState"]["micMuted"] = micMuted;
+        doc["audioState"]["speakerMuted"] = speakerMuted;
         String payload;
         serializeJson(doc, payload);
         webSocket.sendTXT(payload);
+    }
+
+    inline void _applyAudioMuteState(bool muteMic, bool muteSpeaker, bool reportToBackend)
+    {
+        micMuted = muteMic;
+        speakerMuted = muteSpeaker;
+        displayState.micMuted = micMuted;
+        displayState.speakerMuted = speakerMuted;
+        _updateMicStatus();
+        if (micMuted)
+            displayState.micLevel = 0;
+        if (deviceSpeaking)
+            M5.Speaker.setVolume(speakerMuted ? 0 : 180);
+        if (reportToBackend)
+            _sendAudioMuteState();
+        redrawDisplay();
+        drawMicLevelBar();
     }
 
     // Uploads the persona + optional example history + this device's MCP-style tool declarations
@@ -299,7 +368,14 @@ namespace BackendComm
         if (deserializeJson(doc, payload, length) != DeserializationError::Ok)
             return;
 
-        if (doc["config"].is<JsonObject>())
+        if (doc["audioState"].is<JsonObject>())
+        {
+            JsonObjectConst audioState = doc["audioState"].as<JsonObjectConst>();
+            bool muteMic = audioState["micMuted"] | micMuted;
+            bool muteSpeaker = audioState["speakerMuted"] | speakerMuted;
+            _applyAudioMuteState(muteMic, muteSpeaker, false);
+        }
+        else if (doc["config"].is<JsonObject>())
         {
             _handleConfigMessage(doc["config"].as<JsonObjectConst>());
         }
@@ -328,7 +404,7 @@ namespace BackendComm
                 M5.Mic.end();
             }
             M5.Speaker.begin();
-            M5.Speaker.setVolume(180);
+            M5.Speaker.setVolume(speakerMuted ? 0 : 180);
             M5.Speaker.setChannelVolume(kDeviceAudioChannel, kDeviceAudioVolume);
             redrawDisplay();
         }
@@ -352,6 +428,7 @@ namespace BackendComm
             displayState.wsStatus = "Server: connected";
             Serial.println("[WS] Connected");
             _sendDeviceInfo();
+            _sendAudioMuteState();
             redrawDisplay();
             break;
         case WStype_DISCONNECTED:
@@ -519,28 +596,33 @@ namespace BackendComm
 
     inline void _toggleMicMute()
     {
-        micMuted = !micMuted;
-        _updateMicStatus();
-        displayState.micLevel = 0;
-        _sendMicState();
-        redrawDisplay();
-        drawMicLevelBar();
+        _applyAudioMuteState(!micMuted, speakerMuted, true);
+    }
+
+    inline void _toggleSpeakerMute()
+    {
+        _applyAudioMuteState(micMuted, !speakerMuted, true);
     }
 
     inline void _checkMuteControl()
     {
         M5.update();
-        bool activated = M5.BtnA.wasPressed();
-
-        // Boards with a touch screen use the mic-level meter as their mute control.
-        if (!activated && M5.Touch.getCount())
+        if (M5.BtnA.wasPressed())
         {
-            auto touch = M5.Touch.getDetail(0);
-            activated = touch.wasClicked() && touch.x >= kMicBarX && touch.x < kMicBarX + kMicBarWidth && touch.y >= kMicBarY && touch.y < kMicBarY + kMicBarHeight;
+            _toggleMicMute();
+            return;
         }
 
-        if (activated)
+        if (!M5.Touch.getCount())
+            return;
+
+        auto touch = M5.Touch.getDetail(0);
+        if (!touch.wasPressed())
+            return;
+        if (muteButtonContains(touch.x, touch.y, muteButtonX()))
             _toggleMicMute();
+        else if (muteButtonContains(touch.x, touch.y, speakerMuteButtonX()))
+            _toggleSpeakerMute();
     }
 
     // Call once from setup(): brings up the M5Stack, mic, WiFi, and the backend WebSocket.

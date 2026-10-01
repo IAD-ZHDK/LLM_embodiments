@@ -6,7 +6,7 @@ import socket
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -15,7 +15,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.widgets import Checkbox, DataTable, Footer, Header, Input, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import Checkbox, DataTable, Footer, Header, Input, RichLog, Select, Static, TabbedContent, TabPane
 
 
 class SelectableRichLog(RichLog):
@@ -104,14 +104,18 @@ class TerminalUI(App):
     #overview-right { width: 1fr; height: 1fr; }
     #overview-scroll { height: 1fr; }
     .device-content { width: 1fr; height: 1fr; }
-    .device-sidebar { width: 2fr; min-width: 28; height: 1fr; }
+    .device-sidebar { width: 2fr; min-width: 28; height: 1fr; overflow-x: hidden; overflow-y: scroll; }
     .device-log-column { width: 3fr; min-width: 32; height: 1fr; }
     #toolbar { height: 4; }
     #banner { width: 1fr; height: 4; content-align: center middle; background: $accent; }
+    #model-controls { height: auto; }
+    .model-control { height: 3; }
+    .model-label { width: 12; height: 3; content-align: left middle; }
+    .model-select { width: 1fr; }
     .audio-controls { height: 3; }
     .audio-controls-row { height: 1; }
     .pane-heading { height: 1; text-style: bold; color: $accent; }
-    .audio-controls Checkbox {
+    .audio-controls-row Checkbox {
         width: 1fr;
         height: 1;
         border: none;
@@ -139,6 +143,18 @@ class TerminalUI(App):
         on_toggle_tts: Optional[Callable[[str, bool], None]] = None,
         on_toggle_audio_route: Optional[Callable[[str, bool, bool], None]] = None,
         on_toggle_mic: Optional[Callable[[str, bool], None]] = None,
+        model_name: str = "",
+        stt_model: str = "",
+        tts_model: str = "",
+        stt_models: Optional[List[str]] = None,
+        tts_models: Optional[List[str]] = None,
+        on_list_models: Optional[Callable[[], List[str]]] = None,
+        on_list_stt_models: Optional[Callable[[], List[str]]] = None,
+        on_list_tts_models: Optional[Callable[[], List[str]]] = None,
+        on_change_model: Optional[Callable[[str], Optional[str]]] = None,
+        on_change_stt_model: Optional[Callable[[str], Optional[str]]] = None,
+        on_change_tts_model: Optional[Callable[[str], Optional[str]]] = None,
+        on_add_tts_model: Optional[Callable[[str], str]] = None,
     ) -> None:
         super().__init__()
         self.host = host
@@ -148,6 +164,19 @@ class TerminalUI(App):
         self._on_toggle_tts = on_toggle_tts
         self._on_toggle_audio_route = on_toggle_audio_route
         self._on_toggle_mic = on_toggle_mic
+        self.model_name = model_name
+        self.stt_model = stt_model
+        self.tts_model = tts_model
+        self.stt_models = stt_models or []
+        self.tts_models = tts_models or []
+        self._on_list_models = on_list_models
+        self._on_list_stt_models = on_list_stt_models
+        self._on_list_tts_models = on_list_tts_models
+        self._on_change_model = on_change_model
+        self._on_change_stt_model = on_change_stt_model
+        self._on_change_tts_model = on_change_tts_model
+        self._on_add_tts_model = on_add_tts_model
+        self._updating_model_options = False
         self._mic_muted: Dict[str, bool] = {}
         self._speaker_muted: Dict[str, bool] = {}
         self._audio_input_local: Dict[str, bool] = {}
@@ -176,6 +205,29 @@ class TerminalUI(App):
                     with Vertical(id="overview-right"):
                         with Horizontal(id="toolbar"):
                             yield Static("", id="banner")
+                        with Vertical(id="model-controls"):
+                            for label, model, options, control_id in (
+                                ("LLM model", self.model_name, [self.model_name] if self.model_name else [], "model-select"),
+                                ("STT model", self.stt_model, self.stt_models, "stt-model-select"),
+                                ("TTS model", self.tts_model, self.tts_models, "tts-model-select"),
+                            ):
+                                choices = list(dict.fromkeys(([model] if model else []) + options))
+                                with Horizontal(classes="model-control"):
+                                    yield Static(label, classes="model-label pane-heading")
+                                    yield Select(
+                                        [(choice, choice) for choice in choices],
+                                        value=model or Select.NULL,
+                                        allow_blank=not model,
+                                        id=control_id,
+                                        classes="model-select",
+                                    )
+                            with Horizontal(classes="model-control"):
+                                yield Static("Add TTS voice", classes="model-label pane-heading")
+                                yield Input(
+                                    placeholder="Piper voice, e.g. en_GB-alan-low - Enter to download",
+                                    id="tts-model-add",
+                                    classes="model-select",
+                                )
                         with VerticalScroll(id="overview-scroll"):
                             yield Static("Connected devices", classes="pane-heading")
                             yield DataTable(id="main-sessions")
@@ -193,6 +245,88 @@ class TerminalUI(App):
         self._refresh_table()
         self._refresh_banner()
         self.query_one("#prompt-input", Input).focus()
+        if any((self._on_list_models, self._on_list_stt_models, self._on_list_tts_models)):
+            threading.Thread(target=self._load_model_options, daemon=True).start()
+
+    def _load_model_options(self) -> None:
+        callbacks = (
+            (self._on_list_models, self.model_name, "Ollama"),
+            (self._on_list_stt_models, self.stt_model, "STT"),
+            (self._on_list_tts_models, self.tts_model, "TTS"),
+        )
+        option_lists = []
+        for callback, current, label in callbacks:
+            try:
+                models = callback() if callback else []
+            except Exception as exc:
+                print(f"⚠️ Could not load {label} models: {exc}")
+                models = []
+            if current and current not in models:
+                models.insert(0, current)
+            option_lists.append(models)
+        try:
+            self.call_from_thread(self._set_model_options, *option_lists)
+        except RuntimeError:
+            pass
+
+    def _set_model_options(
+        self,
+        models: List[str],
+        stt_models: List[str],
+        tts_models: List[str],
+    ) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self._set_model_options, models, stt_models, tts_models)
+            return
+        self._updating_model_options = True
+        try:
+            for selector_id, current, model_list in (
+                ("model-select", self.model_name, models),
+                ("stt-model-select", self.stt_model, stt_models),
+                ("tts-model-select", self.tts_model, tts_models),
+            ):
+                try:
+                    selector = self.query_one(f"#{selector_id}", Select)
+                except Exception:
+                    continue
+                clean_models = list(dict.fromkeys(model.strip() for model in model_list if model.strip()))
+                if current and current not in clean_models:
+                    clean_models.insert(0, current)
+                if not clean_models:
+                    continue
+                selector.set_options((model, model) for model in clean_models)
+                if current in clean_models:
+                    selector.value = current
+        finally:
+            self._updating_model_options = False
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if self._updating_model_options:
+            return
+        model = str(event.value)
+        control = {
+            "model-select": ("model_name", self._on_change_model),
+            "stt-model-select": ("stt_model", self._on_change_stt_model),
+            "tts-model-select": ("tts_model", self._on_change_tts_model),
+        }.get(event.select.id or "")
+        if not control:
+            return
+        attribute, callback = control
+        previous_model = getattr(self, attribute)
+        if not model or model == previous_model or not callback:
+            return
+        try:
+            summary = callback(model)
+        except Exception as exc:
+            print(f"⚠️ Could not change {attribute.replace('_', ' ')}: {exc}")
+            self._updating_model_options = True
+            event.select.value = previous_model or Select.NULL
+            self._updating_model_options = False
+            return
+        setattr(self, attribute, model)
+        if summary:
+            self.update_model_summary(summary)
+        self.log_line(f"{attribute.replace('_', ' ').upper()} changed to {model}")
 
     def _tab_id(self, session_id: str) -> str:
         return f"tab-{session_id}"
@@ -208,6 +342,13 @@ class TerminalUI(App):
         return active[len("tab-"):]
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "tts-model-add":
+            voice = event.value.strip()
+            if not voice:
+                return
+            event.input.value = ""
+            self._start_tts_download(voice)
+            return
         if event.input.id != "prompt-input":
             return
         prompt = event.value.strip()
@@ -216,6 +357,51 @@ class TerminalUI(App):
         event.input.value = ""
         if self._on_prompt:
             self._on_prompt(self._active_device_session_id(), prompt)
+
+    def _start_tts_download(self, voice: str) -> None:
+        if not self._on_add_tts_model:
+            return
+        try:
+            self.query_one("#tts-model-add", Input).disabled = True
+        except Exception:
+            pass
+        self.log_line(f"⬇️ Downloading Piper voice '{voice}'...")
+        threading.Thread(target=self._download_tts_model, args=(voice,), daemon=True).start()
+
+    def _download_tts_model(self, voice: str) -> None:
+        new_model: Optional[str] = None
+        error: Optional[str] = None
+        try:
+            new_model = self._on_add_tts_model(voice)
+        except Exception as exc:
+            error = str(exc)
+        try:
+            self.call_from_thread(self._finish_tts_download, voice, new_model, error)
+        except RuntimeError:
+            pass
+
+    def _finish_tts_download(self, voice: str, new_model: Optional[str], error: Optional[str]) -> None:
+        try:
+            self.query_one("#tts-model-add", Input).disabled = False
+        except Exception:
+            pass
+        if error:
+            self.log_line(f"⚠️ Could not add Piper voice '{voice}': {error}")
+            return
+        if not new_model:
+            return
+        self.log_line(f"✅ Added and selected TTS voice '{new_model}'")
+        self.tts_models = list(dict.fromkeys([new_model] + self.tts_models))
+        self.tts_model = new_model
+        self._updating_model_options = True
+        try:
+            selector = self.query_one("#tts-model-select", Select)
+            selector.set_options((m, m) for m in self.tts_models)
+            selector.value = new_model
+        except Exception:
+            pass
+        finally:
+            self._updating_model_options = False
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         checkbox_id = event.checkbox.id or ""
@@ -230,14 +416,33 @@ class TerminalUI(App):
             self._emit_audio_route_change(session_id)
         elif checkbox_id.startswith("mic-mute-"):
             session_id = checkbox_id[len("mic-mute-"):]
+            if self._mic_muted.get(session_id, False) == selected:
+                return
             self._mic_muted[session_id] = selected
             if self._on_toggle_mic:
                 self._on_toggle_mic(session_id, selected)
         elif checkbox_id.startswith("speaker-mute-"):
             session_id = checkbox_id[len("speaker-mute-"):]
+            if self._speaker_muted.get(session_id, False) == selected:
+                return
             self._speaker_muted[session_id] = selected
             if self._on_toggle_tts:
                 self._on_toggle_tts(session_id, selected)
+
+    def update_audio_mutes(self, session_id: str, mic_muted: bool, speaker_muted: bool) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.update_audio_mutes, session_id, mic_muted, speaker_muted)
+            return
+        self._mic_muted[session_id] = mic_muted
+        self._speaker_muted[session_id] = speaker_muted
+        for control_id, value in (
+            (f"mic-mute-{session_id}", mic_muted),
+            (f"speaker-mute-{session_id}", speaker_muted),
+        ):
+            try:
+                self.query_one(f"#{control_id}", Checkbox).value = value
+            except Exception:
+                pass
 
     def _emit_audio_route_change(self, session_id: str) -> None:
         if not self._on_toggle_audio_route:
@@ -368,30 +573,25 @@ class TerminalUI(App):
             f"Device {session_id}",
             Horizontal(
                 VerticalScroll(
-                Vertical(
-                    Vertical(
-                        Static("Audio routing", classes="pane-heading"),
-                        Horizontal(
-                            DeviceCheckbox("Local audio in", value=default_in_local, id=f"audio-in-local-{session_id}"),
-                            DeviceCheckbox("Mute mic", id=f"mic-mute-{session_id}"),
-                            classes="audio-controls-row",
-                        ),
-                        Horizontal(
-                            DeviceCheckbox("Local audio out", value=default_out_local, id=f"audio-out-local-{session_id}"),
-                            DeviceCheckbox("Mute speaker", id=f"speaker-mute-{session_id}"),
-                            classes="audio-controls-row",
-                        ),
-                        classes="audio-controls",
+                    Static("Audio routing", classes="pane-heading"),
+                    Horizontal(
+                        DeviceCheckbox("Local audio in", value=default_in_local, id=f"audio-in-local-{session_id}"),
+                        DeviceCheckbox("Mute mic", id=f"mic-mute-{session_id}"),
+                        classes="audio-controls-row",
                     ),
-                        Static("Connection", classes="pane-heading"),
+                    Horizontal(
+                        DeviceCheckbox("Local audio out", value=default_out_local, id=f"audio-out-local-{session_id}"),
+                        DeviceCheckbox("Mute speaker", id=f"speaker-mute-{session_id}"),
+                        classes="audio-controls-row",
+                    ),
+                    Static("Connection", classes="pane-heading"),
                     Static(f"Kind: {kind} | Status: connected", id=f"status-{session_id}", classes="device-status"),
-                        Static("Tools", classes="pane-heading"),
+                    Static("Tools", classes="pane-heading"),
                     Static("Available tools\n(none yet)", id=f"tools-{session_id}", classes="device-tools"),
-                        Static("Now playing", classes="pane-heading"),
+                    Static("Now playing", classes="pane-heading"),
                     Static("", id=f"now-{session_id}", classes="device-now-playing"),
-                ),
-                id=f"scroll-{session_id}",
-                classes="device-sidebar",
+                    id=f"scroll-{session_id}",
+                    classes="device-sidebar",
                 ),
                 Vertical(
                     Static("Device log", classes="pane-heading"),
@@ -562,6 +762,11 @@ def update_session(session_id: str, **kwargs) -> None:
         _app.update_session(session_id, **kwargs)
 
 
+def update_audio_mutes(session_id: str, mic_muted: bool, speaker_muted: bool) -> None:
+    if _app is not None:
+        _app.update_audio_mutes(session_id, mic_muted, speaker_muted)
+
+
 def remove_session(session_id: str) -> None:
     if _app is not None:
         _app.remove_session(session_id)
@@ -637,11 +842,32 @@ async def start(
     on_toggle_tts: Optional[Callable[[str, bool], None]] = None,
     on_toggle_audio_route: Optional[Callable[[str, bool, bool], None]] = None,
     on_toggle_mic: Optional[Callable[[str, bool], None]] = None,
+    model_name: str = "",
+    stt_model: str = "",
+    tts_model: str = "",
+    stt_models: Optional[List[str]] = None,
+    tts_models: Optional[List[str]] = None,
+    on_list_models: Optional[Callable[[], List[str]]] = None,
+    on_change_model: Optional[Callable[[str], Optional[str]]] = None,
+    on_change_stt_model: Optional[Callable[[str], Optional[str]]] = None,
+    on_change_tts_model: Optional[Callable[[str], Optional[str]]] = None,
+    get_model: Optional[Callable[[], str]] = None,
+    get_stt_model: Optional[Callable[[], str]] = None,
+    get_tts_model: Optional[Callable[[], str]] = None,
+    on_list_stt_models: Optional[Callable[[], List[str]]] = None,
+    on_list_tts_models: Optional[Callable[[], List[str]]] = None,
+    on_add_tts_model: Optional[Callable[[str], str]] = None,
 ) -> None:
     """Run the Textual UI on the current asyncio loop; print() is rerouted into its log pane."""
     global _app, _original_print
     import builtins
 
+    if get_model:
+        model_name = get_model()
+    if get_stt_model:
+        stt_model = get_stt_model()
+    if get_tts_model:
+        tts_model = get_tts_model()
     _app = TerminalUI(
         host or _local_ip(),
         port,
@@ -650,6 +876,18 @@ async def start(
         on_toggle_tts=on_toggle_tts,
         on_toggle_audio_route=on_toggle_audio_route,
         on_toggle_mic=on_toggle_mic,
+        model_name=model_name,
+        stt_model=stt_model,
+        tts_model=tts_model,
+        stt_models=stt_models,
+        tts_models=tts_models,
+        on_list_models=on_list_models,
+        on_list_stt_models=on_list_stt_models,
+        on_list_tts_models=on_list_tts_models,
+        on_change_model=on_change_model,
+        on_change_stt_model=on_change_stt_model,
+        on_change_tts_model=on_change_tts_model,
+        on_add_tts_model=on_add_tts_model,
     )
     _original_print = builtins.print
     builtins.print = _tui_print

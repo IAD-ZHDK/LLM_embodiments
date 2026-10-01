@@ -84,6 +84,12 @@ class DeviceWebSocketCommunication:
         """Display an assistant reply on this WiFi device."""
         return self._send_json({"assistantResponse": message}, wait=False)
 
+    def send_audio_state(self, mic_muted: bool, speaker_muted: bool) -> bool:
+        return self._send_json(
+            {"audioState": {"micMuted": bool(mic_muted), "speakerMuted": bool(speaker_muted)}},
+            wait=False,
+        )
+
     def send_audio_start(self, sample_rate: int) -> bool:
         return self._send_json({"audioStart": {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}}, wait=False)
 

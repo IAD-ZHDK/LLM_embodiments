@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import re
+import requests
+import stat
+import tempfile
 import time
 from concurrent.futures import Future
 from pathlib import Path
@@ -11,12 +15,14 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+import tomlkit
 
 try:
     from .config_loader import load_config
     from .device_ws_comm import DeviceWebSocketCommunication
     from .function_handler import FunctionHandler
     from .llm_api import LLMAPI
+    from .model_downloader import download_piper_voice
     from .serial_comm import SerialCommunication
     from .speech_workers import SpeechToTextWorker, TextToSpeechWorker
     from . import tui
@@ -25,6 +31,7 @@ except ImportError:
     from device_ws_comm import DeviceWebSocketCommunication
     from function_handler import FunctionHandler
     from llm_api import LLMAPI
+    from model_downloader import download_piper_voice
     from serial_comm import SerialCommunication
     from speech_workers import SpeechToTextWorker, TextToSpeechWorker
     import tui
@@ -169,6 +176,166 @@ def _build_session_config() -> Dict[str, Any]:
     session_config["conversationProtocol"] = [dict(msg) for msg in state.config.get("conversationProtocol", [])]
     session_config["llmSettings"] = dict(state.config.get("llmSettings", {}))
     return session_config
+
+
+def _current_llm_model() -> str:
+    return str(state.config.get("llmSettings", {}).get("model", ""))
+
+
+def _list_ollama_models() -> List[str]:
+    settings = state.config.get("llmSettings", {})
+    current_model = str(settings.get("model", "")).strip()
+    models = [current_model] if current_model else []
+    if str(settings.get("provider", "")).lower() not in ("ollama", "local"):
+        return models
+
+    endpoint = str(settings.get("url", "http://127.0.0.1:11434/api/chat"))
+    base_url = endpoint.split("/api/", 1)[0].rstrip("/")
+    try:
+        response = requests.get(f"{base_url}/api/tags", timeout=2)
+        response.raise_for_status()
+        for item in response.json().get("models", []):
+            name = item.get("name") if isinstance(item, dict) else None
+            if isinstance(name, str) and name.strip():
+                models.append(name.strip())
+    except Exception as exc:
+        print(f"⚠️ Could not list Ollama models: {exc}")
+
+    unique_models = list(dict.fromkeys(models))
+    return unique_models[:1] + sorted(unique_models[1:], key=str.lower) if unique_models else []
+
+
+def _persist_config_values(section_name: str, values: Dict[str, Any]) -> None:
+    config_path = REPO_ROOT / "config.toml"
+    document = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    section = document[section_name]
+    for key, value in values.items():
+        section[key] = value
+
+    file_mode = stat.S_IMODE(config_path.stat().st_mode)
+    temp_path: Optional[str] = None
+    try:
+        file_descriptor, temp_path = tempfile.mkstemp(
+            prefix=f".{config_path.name}.", suffix=".tmp", dir=config_path.parent
+        )
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as config_file:
+            config_file.write(tomlkit.dumps(document))
+            config_file.flush()
+            os.fsync(config_file.fileno())
+        os.chmod(temp_path, file_mode)
+        os.replace(temp_path, config_path)
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+
+    state.config.setdefault(section_name, {}).update(values)
+    for session in state.sessions.values():
+        session.config.setdefault(section_name, {}).update(values)
+
+
+def _set_llm_model_from_ui(model: str) -> str:
+    model = str(model).strip()
+    if not model:
+        raise ValueError("Model name cannot be empty")
+    _persist_config_values("llmSettings", {"model": model, "allowDeviceModelOverride": False})
+    for session in state.sessions.values():
+        session.llm_api.model = model
+
+    print(f"🧠 LLM model changed to {model} and saved to config.toml")
+    provider = str(state.config.get("llmSettings", {}).get("provider", "ollama"))
+    return f"LLM: {model} ({provider})"
+
+
+def _current_stt_model() -> str:
+    return str(state.get_speech_settings().get("speechToTextModel", ""))
+
+
+def _current_tts_model() -> str:
+    return str(state.get_speech_settings().get("textToSpeechModel", ""))
+
+
+def _list_stt_models() -> List[str]:
+    speech = state.config.get("speech", {})
+    current_model = _current_stt_model()
+    if speech.get("sttBackend", "vosk") == "vosk":
+        model_dir = REPO_ROOT / "backend" / "STTmodels"
+        models = sorted(path.name for path in model_dir.iterdir() if path.is_dir()) if model_dir.is_dir() else []
+    else:
+        models = [
+            "tiny.en", "tiny", "base.en", "base", "small.en", "small",
+            "medium.en", "medium", "large-v1", "large-v2", "large-v3", "large",
+            "distil-large-v2", "distil-medium.en", "distil-small.en", "distil-large-v3",
+            "distil-large-v3.5", "large-v3-turbo", "turbo",
+        ]
+    if current_model and current_model not in models:
+        models.insert(0, current_model)
+    return models
+
+
+def _list_tts_models() -> List[str]:
+    model_dir = REPO_ROOT / "backend" / "TTSmodels"
+    models = sorted(
+        path.name
+        for path in model_dir.glob("*.onnx")
+        if path.is_file() and path.with_name(path.name + ".json").is_file()
+    ) if model_dir.is_dir() else []
+    current_model = str(state.get_speech_settings().get("textToSpeechModel", ""))
+    if current_model and current_model not in models:
+        models.insert(0, current_model)
+    return models
+
+
+def _set_stt_model_from_ui(model: str) -> None:
+    model = str(model).strip()
+    if model not in _list_stt_models():
+        raise ValueError(f"Unknown STT model: {model}")
+    _persist_config_values("speech", {"speechToTextModel": model})
+    for session in state.sessions.values():
+        if session.stt:
+            session.stt.close()
+            session.stt = None
+        _start_session_stt(session, source="local" if session.audio_input_local else "remote")
+        if session.stt and session.audio_mic_muted:
+            session.stt.pause()
+    print(f"🎤 STT model changed to {model} and saved to config.toml")
+
+
+def _set_tts_model_from_ui(model: str) -> None:
+    model = str(model).strip()
+    if model not in _list_tts_models():
+        raise ValueError(f"Unknown TTS model: {model}")
+    _persist_config_values("speech", {"textToSpeechModel": model})
+    print(f"🔊 TTS model changed to {model} and saved to config.toml")
+
+
+def _parse_piper_voice_path(voice: str) -> tuple[str, str]:
+    """Accepts either a short stem ("en_GB-alan-low") or a full repo path ("en/en_GB/alan/low/en_GB-alan-low")
+    and returns (stem, repo_relative_path) for the rhasspy/piper-voices Hugging Face layout."""
+    voice = voice.strip().strip("/")
+    if voice.endswith(".onnx"):
+        voice = voice[: -len(".onnx")]
+    if "/" in voice:
+        return voice.rsplit("/", 1)[-1], voice
+    parts = voice.split("-")
+    if len(parts) != 3:
+        raise ValueError(f"Expected format <lang>_<REGION>-<speaker>-<quality>, e.g. en_GB-alan-low (got '{voice}')")
+    lang_region, speaker, quality = parts
+    lang = lang_region.split("_")[0]
+    return voice, f"{lang}/{lang_region}/{speaker}/{quality}/{voice}"
+
+
+def _add_tts_model_from_ui(voice: str) -> str:
+    stem, repo_path = _parse_piper_voice_path(str(voice))
+    model_dir = REPO_ROOT / "backend" / "TTSmodels"
+    model_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{repo_path}.onnx"
+    config_url = f"{model_url}.json"
+    if not download_piper_voice(stem, str(model_dir), model_url=model_url, config_url=config_url):
+        raise ValueError(f"Download failed for Piper voice '{stem}'. Check the voice name and try again.")
+    model_name = f"{stem}.onnx"
+    _persist_config_values("speech", {"textToSpeechModel": model_name})
+    print(f"🔊 Downloaded and selected TTS voice '{model_name}'")
+    return model_name
 
 
 def _submit(coro: Any) -> Optional[Future]:
@@ -625,31 +792,46 @@ def _tts_callback(msg: Dict[str, Any]) -> None:
                 active_session.stt.resume()
 
 
-def _set_speaker_muted(session_id: str, muted: bool) -> None:
+def _sync_audio_mute_state(session: DeviceSession, send_to_device: bool) -> None:
+    tui.update_audio_mutes(session.session_id, session.audio_mic_muted, session.audio_speaker_muted)
+    send_audio_state = getattr(session.comm, "send_audio_state", None)
+    if send_to_device and callable(send_audio_state):
+        send_audio_state(session.audio_mic_muted, session.audio_speaker_muted)
+
+
+def _set_speaker_muted(session_id: str, muted: bool, sync_device: bool = True) -> None:
     session = state.sessions.get(session_id)
     if session is None:
         return
+    muted = bool(muted)
+    changed = session.audio_speaker_muted != muted
     session.audio_speaker_muted = muted
-    if muted and state.tts and session.audio_output_local:
-        state.tts.stop_local(session_id)
-    status = "muted" if muted else "unmuted"
-    print(f"🔊 [{session_id}] Speaker {status}.")
-    tui.log_device(session_id, f"🔊 Speaker {status}")
+    if changed:
+        if muted and state.tts and session.audio_output_local:
+            state.tts.stop_local(session_id)
+        status = "muted" if muted else "unmuted"
+        print(f"🔊 [{session_id}] Speaker {status}.")
+        tui.log_device(session_id, f"🔊 Speaker {status}")
+    _sync_audio_mute_state(session, sync_device)
 
 
-def _set_mic_muted(session_id: str, muted: bool) -> None:
+def _set_mic_muted(session_id: str, muted: bool, sync_device: bool = True) -> None:
     session = state.sessions.get(session_id)
     if session is None:
         return
+    muted = bool(muted)
+    changed = session.audio_mic_muted != muted
     session.audio_mic_muted = muted
-    if session.stt:
-        if muted:
-            session.stt.pause()
-        else:
-            session.stt.resume()
-    status = "muted" if muted else "unmuted"
-    print(f"🎙️ [{session_id}] Microphone {status}.")
-    tui.log_device(session_id, f"🎙️ Microphone {status}")
+    if changed:
+        if session.stt:
+            if muted:
+                session.stt.pause()
+            else:
+                session.stt.resume()
+        status = "muted" if muted else "unmuted"
+        print(f"🎙️ [{session_id}] Microphone {status}.")
+        tui.log_device(session_id, f"🎙️ Microphone {status}")
+    _sync_audio_mute_state(session, sync_device)
 
 
 def _set_audio_route(session_id: str, input_local: bool, output_local: bool) -> None:
@@ -768,7 +950,7 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
         if isinstance(settings, dict):
             applied: List[str] = []
             model = generation.get("model")
-            if isinstance(model, str) and model.strip():
+            if isinstance(model, str) and model.strip() and settings.get("allowDeviceModelOverride", True):
                 settings["model"] = model.strip()
                 applied.append(f"model={model.strip()}")
 
@@ -880,6 +1062,16 @@ async def startup() -> None:
         on_toggle_tts=_set_speaker_muted,
         on_toggle_audio_route=_set_audio_route,
         on_toggle_mic=_set_mic_muted,
+        get_model=_current_llm_model,
+        get_stt_model=_current_stt_model,
+        get_tts_model=_current_tts_model,
+        on_list_models=_list_ollama_models,
+        on_list_stt_models=_list_stt_models,
+        on_list_tts_models=_list_tts_models,
+        on_change_model=_set_llm_model_from_ui,
+        on_change_stt_model=_set_stt_model_from_ui,
+        on_change_tts_model=_set_tts_model_from_ui,
+        on_add_tts_model=_add_tts_model_from_ui,
     ))
     _reload_runtime()
 
@@ -1021,6 +1213,14 @@ async def websocket_device(ws: WebSocket) -> None:
             notification = data.get("notification")
             if isinstance(notification, dict):
                 comm.receive(str(notification.get("name", "")), str(notification.get("value", "")))
+            elif isinstance(data.get("audioState"), dict):
+                audio_state = data["audioState"]
+                mic_muted = audio_state.get("micMuted")
+                speaker_muted = audio_state.get("speakerMuted")
+                if isinstance(mic_muted, bool):
+                    _set_mic_muted(session_id, mic_muted, sync_device=False)
+                if isinstance(speaker_muted, bool):
+                    _set_speaker_muted(session_id, speaker_muted, sync_device=False)
             elif data.get("mic") == "muted" and session.stt and not session.audio_input_local:
                 session.stt.pause()
             elif data.get("mic") == "unmuted" and session.stt and not session.audio_input_local and not session.audio_mic_muted:

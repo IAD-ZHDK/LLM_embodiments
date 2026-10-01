@@ -6,6 +6,7 @@ numpy
 piper-tts
 pyusb 
 requests
+tomlkit>=0.13
 onnxruntime 
 webrtcvad
 setuptools<81  # webrtcvad imports pkg_resources at startup; newer setuptools no longer bundles it

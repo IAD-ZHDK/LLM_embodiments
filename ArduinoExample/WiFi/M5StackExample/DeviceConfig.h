@@ -38,6 +38,8 @@ struct DisplayState
     String wsStatus = "Server: disconnected";
     String wsTarget = "";
     String micStatus = "Mic: live";
+    bool micMuted = false;
+    bool speakerMuted = false;
     String lastDebug = "";
     String lastToolCall = "";
     String lastNotification = "";
@@ -51,6 +53,21 @@ inline const int kMicBarX = 0;
 inline const int kMicBarY = 110;
 inline const int kMicBarWidth = 200;
 inline const int kMicBarHeight = 16;
+inline const int kMuteButtonWidth = 108;
+inline const int kMuteButtonHeight = 32;
+inline const int kMuteButtonGap = 8;
+inline const int kMuteButtonMargin = 8;
+
+inline int muteButtonX() { return (M5.Lcd.width() - (2 * kMuteButtonWidth + kMuteButtonGap)) / 2; }
+inline int speakerMuteButtonX() { return muteButtonX() + kMuteButtonWidth + kMuteButtonGap; }
+inline int muteButtonY() { return M5.Lcd.height() - kMuteButtonHeight - kMuteButtonMargin; }
+
+inline bool muteButtonContains(int x, int y, int buttonX)
+{
+    int buttonY = muteButtonY();
+    return x >= buttonX && x < buttonX + kMuteButtonWidth &&
+           y >= buttonY && y < buttonY + kMuteButtonHeight;
+}
 
 // 0 disables M5Unified's built-in filter; 64 is a conservative starting point for CoreS3's ES7210 mics.
 inline const uint8_t kMicNoiseFilterLevel = 64;
@@ -69,6 +86,22 @@ inline void redrawDisplay()
     M5.Lcd.println(displayState.lastToolCall);
     M5.Lcd.println(displayState.lastNotification);
     M5.Lcd.println(displayState.lastDebug);
+
+    int buttonY = muteButtonY();
+    int micButtonX = muteButtonX();
+    int speakerButtonX = speakerMuteButtonX();
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.fillRect(micButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, displayState.micMuted ? RED : GREEN);
+    M5.Lcd.drawRect(micButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, WHITE);
+    M5.Lcd.setTextColor(BLACK);
+    M5.Lcd.setCursor(micButtonX + 27, buttonY + 12);
+    M5.Lcd.print(displayState.micMuted ? "MIC MUTED" : "MUTE MIC");
+    M5.Lcd.fillRect(speakerButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, displayState.speakerMuted ? RED : GREEN);
+    M5.Lcd.drawRect(speakerButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, WHITE);
+    M5.Lcd.setCursor(speakerButtonX + 27, buttonY + 12);
+    M5.Lcd.print(displayState.speakerMuted ? "SPK MUTED" : "MUTE SPK");
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.setTextColor(WHITE);
 }
 
 // Partial redraw only (no fillScreen) so this can run every audio chunk without flicker.

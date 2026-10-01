@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import subprocess
 import sys
 import threading
@@ -23,6 +24,9 @@ class SpeechToTextWorker:
     ):
         self.callback = callback
         self.source = source
+        self._remote_audio_queue: Optional[queue.Queue[bytes]] = None
+        self._remote_control_queue: Optional[queue.Queue[Dict[str, Any]]] = None
+        self._remote_writer_stop = threading.Event()
         stt_args = ["--backend", backend, "--model", str(model_name)]
         if backend == "whisper":
             # Only meaningful for the faster-whisper backend; ignored by the Vosk path.
@@ -52,6 +56,11 @@ class SpeechToTextWorker:
                 text=True,
                 bufsize=1,
             )
+        if source == "remote":
+            self._remote_audio_queue = queue.Queue(maxsize=128)
+            self._remote_control_queue = queue.Queue()
+            self._remote_writer_thread = threading.Thread(target=self._write_remote_frames, daemon=True)
+            self._remote_writer_thread.start()
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
         self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
         self._stdout_thread.start()
@@ -86,18 +95,56 @@ class SpeechToTextWorker:
         self._send_control({"STT": "resume"})
 
     def push_audio(self, chunk: bytes) -> None:
-        if self.source != "remote":
+        if self.source != "remote" or self._remote_audio_queue is None or self._remote_writer_stop.is_set():
             return
-        self._write_frame(b"A", chunk)
+        try:
+            self._remote_audio_queue.put_nowait(chunk)
+        except queue.Full:
+            try:
+                self._remote_audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._remote_audio_queue.put_nowait(chunk)
+            except queue.Full:
+                pass
 
     def _send_control(self, obj: Dict[str, Any]) -> None:
         if not self.proc.stdin:
             return
         if self.source == "remote":
-            self._write_frame(b"C", json.dumps(obj).encode("utf-8"))
+            if self._remote_control_queue is None:
+                return
+            if obj.get("STT") == "pause" and self._remote_audio_queue is not None:
+                while True:
+                    try:
+                        self._remote_audio_queue.get_nowait()
+                    except queue.Empty:
+                        break
+            self._remote_control_queue.put(obj)
         else:
             self.proc.stdin.write(json.dumps(obj) + "\n")
             self.proc.stdin.flush()
+
+    def _write_remote_frames(self) -> None:
+        audio_queue = self._remote_audio_queue
+        control_queue = self._remote_control_queue
+        if audio_queue is None or control_queue is None:
+            return
+
+        while not self._remote_writer_stop.is_set():
+            if self.proc.poll() is not None:
+                return
+            try:
+                control = control_queue.get_nowait()
+            except queue.Empty:
+                try:
+                    chunk = audio_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                self._write_frame(b"A", chunk)
+            else:
+                self._write_frame(b"C", json.dumps(control).encode("utf-8"))
 
     def _write_frame(self, frame_type: bytes, body: bytes) -> None:
         if not self.proc.stdin:
@@ -107,9 +154,10 @@ class SpeechToTextWorker:
             self.proc.stdin.write(header.to_bytes(4, "big") + frame_type + body)
             self.proc.stdin.flush()
         except Exception:
-            pass
+            self._remote_writer_stop.set()
 
     def close(self) -> None:
+        self._remote_writer_stop.set()
         if self.proc.poll() is None:
             self.proc.terminate()
 

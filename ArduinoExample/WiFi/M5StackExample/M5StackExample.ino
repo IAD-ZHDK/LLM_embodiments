@@ -15,7 +15,7 @@
 
 // --- Device state ---
 bool soundOn = false;
-int soundFrequency = 1000; // Hz
+String soundSequence = "1000:500"; // comma-separated "frequency:durationMs" segments
 String storedString = "hello from the M5Stack";
 unsigned long yellowCircleUntil = 0;
 bool yellowCircleShown = false;
@@ -23,8 +23,8 @@ bool yellowCircleShown = false;
 // --- Tool handlers: called when the model asks this device to do something ---
 void set_sound(const String &value)
 {
+    soundSequence = value;
     soundOn = true;
-    soundFrequency = value.toInt();
 }
 
 void get_String(const String &value)
@@ -45,7 +45,7 @@ void show_yellow_circle(const String &value)
 
 // --- Tools available to the model (MCP-style: name, description, dataType, handler) ---
 DeviceTool deviceTools[] = {
-    {"set_sound", "Makes a sound for 500 miliseconds. You can set the frequency with the value.", "int", "write", set_sound},
+    {"set_sound", "Plays a tone or a sequence of tones. Value is comma-separated \"frequency:durationMs\" segments in Hz:milliseconds, e.g. \"880:200,:100,660:200\"; leave frequency blank for a silent pause.", "string", "write", set_sound},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String},
     {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle},
 };
@@ -98,7 +98,7 @@ void loop()
 
     if (soundOn)
     {
-        BackendComm::playTone(soundFrequency, 500);
+        BackendComm::playToneSequence(soundSequence);
         soundOn = false;
     }
 

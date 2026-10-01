@@ -483,8 +483,14 @@ def resolve_tts_model_name(model_value):
         if candidate in TTS_MODELS:
             return candidate
 
-        if not candidate.endswith('.onnx') and f"{candidate}.onnx" in TTS_MODELS:
-            return f"{candidate}.onnx"
+        if not candidate.endswith(".onnx"):
+            candidate = f"{candidate}.onnx"
+
+        if os.path.basename(candidate) != candidate:
+            return None
+        model_path = os.path.join(MODEL_PATH, candidate)
+        if os.path.isfile(model_path) and os.path.isfile(model_path + ".json"):
+            return candidate
 
         return None
 

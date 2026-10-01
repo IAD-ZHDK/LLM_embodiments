@@ -25,6 +25,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "llmSettings": {
         "provider": "ollama",
         "model": "llama3.2:3b",
+        "allowDeviceModelOverride": True,
         "url": "http://127.0.0.1:11434/api/chat",
         "temperature": 0.9,
         "frequency_penalty": 0.0,

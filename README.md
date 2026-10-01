@@ -102,9 +102,7 @@ Two STT backends are supported, set via `speech.sttBackend` in [config.toml](con
 - `"vosk"` (default) - lightweight, CPU-only, streams partial results as you speak.
 - `"whisper"` - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2). More accurate, supports
   CUDA GPUs, and is the better choice if you plan to run on multiple graphics cards or (in a future version) run
-  several simultaneous transcription sessions in parallel, since each session loads its own model instance and can
-  be pinned to its own GPU via `speech.whisper.deviceIndex`. It has no streaming partials: it transcribes each
-  utterance shortly after you stop speaking, using the same voice-activity detection as the Vosk path.
+  several simultaneous transcription sessions in parallel, since each session loads its own model instance and can be pinned to its own GPU via `speech.whisper.deviceIndex`. It has no streaming partials: it transcribes each utterance shortly after you stop speaking, using the same voice-activity detection as the Vosk path.
 
 Install whichever backend(s) you plan to use:
 
@@ -119,11 +117,20 @@ python -m pip install faster-whisper
 The repository already contains multiple Vosk models under `backend/STTmodels/`.
 If you want to add another one manually:
 
+macOS/Linux:
 ```bash
 cd backend/STTmodels
-wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+curl -LO https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
 unzip vosk-model-small-en-us-0.15.zip
 rm vosk-model-small-en-us-0.15.zip
+```
+
+Windows (PowerShell):
+```powershell
+cd backend\STTmodels
+Invoke-WebRequest https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -OutFile vosk-model-small-en-us-0.15.zip
+Expand-Archive vosk-model-small-en-us-0.15.zip -DestinationPath .
+Remove-Item vosk-model-small-en-us-0.15.zip
 ```
 
 Whisper models are downloaded automatically by faster-whisper on first use (no manual step needed). Suggested
@@ -142,10 +149,20 @@ Set the STT model name in [config.toml](config.toml) as `speechToTextModel` (fol
 Place both `.onnx` and matching `.onnx.json` files in `backend/TTSmodels/`.
 Example (English voice):
 
+macOS/Linux:
 ```bash
 cd backend/TTSmodels
-wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx
+curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
+```
+
+macOS does not ship `wget`; use `curl -LO` as above, or install it with `brew install wget`.
+
+Windows (PowerShell, `curl` is aliased to `Invoke-WebRequest`; use `curl.exe` for the real curl):
+```powershell
+cd backend\TTSmodels
+curl.exe -LO https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx
+curl.exe -LO https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/low/en_GB-alan-low.onnx.json
 ```
 
 Set the TTS model file name in [config.toml](config.toml) as `textToSpeechModel`.
@@ -180,6 +197,8 @@ On macOS:
 brew install git
 brew install libusb
 ```
+
+On Windows: these packages are Linux-only (libusb, portaudio, fswebcam are system libraries `apt` installs on Debian/Ubuntu). Git, USB-serial drivers, and audio I/O are already available through Windows/Python, so no equivalent manual step is needed; use `setup.ps1` instead (see Windows section above).
 
 ### 2. Create and activate a Python virtual environment and install packages
 
