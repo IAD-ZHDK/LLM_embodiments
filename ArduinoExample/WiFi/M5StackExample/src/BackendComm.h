@@ -266,6 +266,42 @@ namespace BackendComm
         webSocket.sendTXT(payload);
     }
 
+    inline bool sendCameraFrame(uint8_t *buffer, size_t length, uint16_t width, uint16_t height)
+    {
+        if (!serverConnected || !buffer || length == 0)
+            return false;
+
+        JsonDocument doc;
+        JsonObject image = doc["cameraImageStart"].to<JsonObject>();
+        image["length"] = length;
+        image["width"] = width;
+        image["height"] = height;
+        image["format"] = "rgb565";
+        String payload;
+        serializeJson(doc, payload);
+        if (!webSocket.sendTXT(payload))
+            return false;
+
+        const size_t chunkSize = 4096;
+        for (size_t offset = 0; offset < length; offset += chunkSize)
+        {
+            size_t currentSize = min(length - offset, chunkSize);
+            if (!webSocket.sendBIN(buffer + offset, currentSize))
+                return false;
+            M5.delay(1);
+        }
+        return true;
+    }
+
+    inline void sendCameraError(const String &message)
+    {
+        JsonDocument doc;
+        doc["cameraImageError"] = message;
+        String payload;
+        serializeJson(doc, payload);
+        webSocket.sendTXT(payload);
+    }
+
     inline void _sendAudioMuteState()
     {
         JsonDocument doc;
@@ -322,6 +358,7 @@ namespace BackendComm
             tool["description"] = deviceTools[i].description;
             tool["dataType"] = deviceTools[i].dataType;
             tool["commType"] = deviceTools[i].commType;
+            tool["responseType"] = deviceTools[i].responseType;
         }
         JsonArray history = doc["deviceInfo"]["history"].to<JsonArray>();
         for (size_t i = 0; i < kPersonaHistoryCount; i++)

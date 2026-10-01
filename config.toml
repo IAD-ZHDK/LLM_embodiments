@@ -65,7 +65,7 @@ provider = "ollama"  # "ollama" for local model on this device, "openai" for clo
 temperature = 0.9  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "llama3.2:3b"  # e.g. llama3.2:3b, deepseek-r1:1.5b (R1 distill), qwen2:7b, qwen2.5:3b, phi3:minio
+model = "gemma4:e4b"  # default Ollama model; change to another supported model as needed
 # Allow deviceInfo to override the configured model until a model is chosen in the TUI.
 allowDeviceModelOverride = false
 max_tokens = 4096  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
@@ -120,6 +120,15 @@ description = "Test tool call. Call this exactly once when the user says 'waterm
 target = "notification"
 commType = "read"
 dataType = "integer"
+
+[camera]
+deviceIndex = 0
+
+[functions.tools.take_picture]
+description = "Capture a photo with the built-in camera and inspect it to answer visual questions."
+target = "camera"
+commType = "read"
+dataType = "none"
 
 # Global instructions apply to every device and come before any device-specific persona.
 [[conversationProtocol]]

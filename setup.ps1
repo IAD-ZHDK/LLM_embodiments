@@ -42,7 +42,7 @@ Write-Host "Installing Python dependencies..."
 & $VenvPython -m pip install -r "backend\requirements.txt"
 
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
-    Write-Warning "Ollama is not installed. Install it from https://ollama.com/download/windows, then run: ollama pull qwen3:14b"
+    Write-Warning "Ollama is not installed. Install it from https://ollama.com/download/windows, then run: ollama pull gemma4:e4b"
 } else {
     Write-Host "Ollama found: $(& ollama --version)"
 }

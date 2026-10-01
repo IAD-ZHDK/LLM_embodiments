@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+try:
+    from .camera import capture_image
+except ImportError:
+    from camera import capture_image
+
 
 class FunctionHandler:
     def __init__(self, config: Dict[str, Any], com_object: Any):
@@ -77,6 +82,7 @@ class FunctionHandler:
                 "description": item.get("description", ""),
                 "commType": item.get("commType", "read"),
                 "target": item.get("target", default_target),
+                "responseType": item.get("responseType", ""),
                 "deviceCommand": item.get("deviceCommand", name),
                 "parameters": {
                     "type": "object",
@@ -132,15 +138,26 @@ class FunctionHandler:
         if func_def is None:
             return {"role": "error", "message": f"Error: function does not exist: {function_name}"}
 
+        if func_def.get("target") == "camera":
+            camera_settings = self.config.get("camera", {})
+            device_index = camera_settings.get("deviceIndex", 0) if isinstance(camera_settings, dict) else 0
+            return capture_image(device_index)
+
         comm_type = func_def.get("commType", "read")
         device_command = str(func_def.get("deviceCommand", function_name))
         payload = {
             "name": device_command,
             "value": function_arguments.get("value", ""),
             "dataType": func_def.get("parameters", {}).get("type", "string"),
+            "responseType": func_def.get("responseType", ""),
         }
 
-        if hasattr(self.com_object, function_name):
+        if func_def.get("responseType") == "image/rgb565":
+            read_image = getattr(self.com_object, "read_image", None)
+            if not callable(read_image):
+                return {"role": "error", "message": "This device does not support camera image responses."}
+            result = read_image(payload)
+        elif hasattr(self.com_object, function_name):
             result = getattr(self.com_object, function_name)()
         elif hasattr(self.com_object, device_command):
             result = getattr(self.com_object, device_command)()
@@ -153,6 +170,15 @@ class FunctionHandler:
 
         if result.get("description") == "Error":
             return {"role": "error", "message": f"function_call with error: {result.get('value')}"}
+
+        if isinstance(result.get("image_base64"), str):
+            return {
+                "role": "functionReturnValue",
+                "message": f"Camera image captured: {function_name}",
+                "value": "M5Stack camera photo captured; inspect the attached image.",
+                "image_base64": result["image_base64"],
+                "mime_type": str(result.get("mime_type", "image/jpeg")),
+            }
 
         formatted = json.dumps({result.get("description", "response"): result.get("value")})
         return {"role": "functionReturnValue", "message": f"function_call complete: {function_name}", "value": formatted}

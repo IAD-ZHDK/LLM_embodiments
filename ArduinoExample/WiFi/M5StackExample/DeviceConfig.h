@@ -48,15 +48,15 @@ struct DisplayState
 
 inline DisplayState displayState;
 
-// Geometry for the mic level bar, drawn below the status text block.
-inline const int kMicBarX = 0;
-inline const int kMicBarY = 110;
-inline const int kMicBarWidth = 200;
-inline const int kMicBarHeight = 16;
+// Geometry for the volume bar, drawn below the status text block and spanning the full display width.
+inline const int kVolumeBarY = 110;
+inline const int kVolumeBarHeight = 16;
 inline const int kMuteButtonWidth = 108;
 inline const int kMuteButtonHeight = 32;
 inline const int kMuteButtonGap = 8;
 inline const int kMuteButtonMargin = 8;
+
+inline int volumeBarWidth() { return M5.Lcd.width(); }
 
 inline int muteButtonX() { return (M5.Lcd.width() - (2 * kMuteButtonWidth + kMuteButtonGap)) / 2; }
 inline int speakerMuteButtonX() { return muteButtonX() + kMuteButtonWidth + kMuteButtonGap; }
@@ -87,17 +87,23 @@ inline void redrawDisplay()
     M5.Lcd.println(displayState.lastNotification);
     M5.Lcd.println(displayState.lastDebug);
 
+    M5.Lcd.setCursor(0, kVolumeBarY - 10);
+    M5.Lcd.print("Volume");
+
     int buttonY = muteButtonY();
     int micButtonX = muteButtonX();
     int speakerButtonX = speakerMuteButtonX();
     M5.Lcd.setTextSize(1);
-    M5.Lcd.fillRect(micButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, displayState.micMuted ? RED : GREEN);
+    uint16_t micFill = displayState.micMuted ? BLACK : WHITE;
+    M5.Lcd.fillRect(micButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, micFill);
     M5.Lcd.drawRect(micButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, WHITE);
-    M5.Lcd.setTextColor(BLACK);
+    M5.Lcd.setTextColor(displayState.micMuted ? WHITE : BLACK);
     M5.Lcd.setCursor(micButtonX + 27, buttonY + 12);
     M5.Lcd.print(displayState.micMuted ? "MIC MUTED" : "MUTE MIC");
-    M5.Lcd.fillRect(speakerButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, displayState.speakerMuted ? RED : GREEN);
+    uint16_t spkFill = displayState.speakerMuted ? BLACK : WHITE;
+    M5.Lcd.fillRect(speakerButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, spkFill);
     M5.Lcd.drawRect(speakerButtonX, buttonY, kMuteButtonWidth, kMuteButtonHeight, WHITE);
+    M5.Lcd.setTextColor(displayState.speakerMuted ? WHITE : BLACK);
     M5.Lcd.setCursor(speakerButtonX + 27, buttonY + 12);
     M5.Lcd.print(displayState.speakerMuted ? "SPK MUTED" : "MUTE SPK");
     M5.Lcd.setTextSize(1);
@@ -107,11 +113,12 @@ inline void redrawDisplay()
 // Partial redraw only (no fillScreen) so this can run every audio chunk without flicker.
 inline void drawMicLevelBar()
 {
-    int fillWidth = map(constrain(displayState.micLevel, 0, 100), 0, 100, 0, kMicBarWidth);
-    M5.Lcd.fillRect(kMicBarX, kMicBarY, kMicBarWidth, kMicBarHeight, BLACK);
-    M5.Lcd.drawRect(kMicBarX, kMicBarY, kMicBarWidth, kMicBarHeight, WHITE);
+    int barWidth = volumeBarWidth();
+    int fillWidth = map(constrain(displayState.micLevel, 0, 100), 0, 100, 0, barWidth);
+    M5.Lcd.fillRect(0, kVolumeBarY, barWidth, kVolumeBarHeight, BLACK);
+    M5.Lcd.drawRect(0, kVolumeBarY, barWidth, kVolumeBarHeight, WHITE);
     if (fillWidth > 0)
     {
-        M5.Lcd.fillRect(kMicBarX + 1, kMicBarY + 1, fillWidth - 1, kMicBarHeight - 2, GREEN);
+        M5.Lcd.fillRect(1, kVolumeBarY + 1, fillWidth - 1, kVolumeBarHeight - 2, WHITE);
     }
 }

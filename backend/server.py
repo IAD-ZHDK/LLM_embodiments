@@ -1198,6 +1198,8 @@ async def websocket_device(ws: WebSocket) -> None:
 
             audio_chunk = message.get("bytes")
             if audio_chunk is not None:
+                if session.comm.receive_camera_image_chunk(audio_chunk):
+                    continue
                 if not session.audio_input_local and session.stt and hasattr(session.stt, "push_audio"):
                     session.stt.push_audio(audio_chunk)
                 continue
@@ -1210,8 +1212,14 @@ async def websocket_device(ws: WebSocket) -> None:
             except Exception:
                 continue
 
-            notification = data.get("notification")
-            if isinstance(notification, dict):
+            image_metadata = data.get("cameraImageStart")
+            if isinstance(image_metadata, dict):
+                if not comm.begin_camera_image(image_metadata):
+                    print(f"⚠️ [{session_id}] Ignored unsolicited camera image frame.")
+            elif isinstance(data.get("cameraImageError"), str):
+                comm.fail_camera_image(data["cameraImageError"])
+            elif isinstance(data.get("notification"), dict):
+                notification = data["notification"]
                 comm.receive(str(notification.get("name", "")), str(notification.get("value", "")))
             elif isinstance(data.get("audioState"), dict):
                 audio_state = data["audioState"]

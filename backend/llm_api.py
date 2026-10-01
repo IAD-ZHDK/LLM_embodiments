@@ -119,8 +119,24 @@ class LLMAPI:
         except Exception:
             return str(value)
 
+    @staticmethod
+    def _redact_image_data(value: Any) -> Any:
+        if isinstance(value, dict):
+            redacted = {}
+            for key, item in value.items():
+                if key == "image_base64" or key == "images":
+                    redacted[key] = "[image data omitted]"
+                elif key == "url" and isinstance(item, str) and item.startswith("data:image/"):
+                    redacted[key] = "[image data omitted]"
+                else:
+                    redacted[key] = LLMAPI._redact_image_data(item)
+            return redacted
+        if isinstance(value, list):
+            return [LLMAPI._redact_image_data(item) for item in value]
+        return value
+
     def _debug_log(self, label: str, value: Any) -> None:
-        text = self._safe_json_dump(value)
+        text = self._safe_json_dump(self._redact_image_data(value))
         limit = 4000
         if len(text) > limit:
             text = text[:limit] + "... [truncated]"
@@ -134,7 +150,7 @@ class LLMAPI:
             "event": event,
             "provider": self.provider,
             "model": self.config.get("llmSettings", {}).get("model", self.model),
-            "data": value,
+            "data": self._redact_image_data(value),
         }
         try:
             log_path = Path(__file__).resolve().parent.parent / "logs" / "llm_protocol.jsonl"
@@ -380,6 +396,47 @@ class LLMAPI:
         }
         return json.dumps(payload, ensure_ascii=True)
 
+    @staticmethod
+    def _message_contains_image(message: Dict[str, Any]) -> bool:
+        if message.get("images"):
+            return True
+        content = message.get("content")
+        return isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
+        )
+
+    def _append_camera_image(self, image_base64: str, mime_type: str) -> None:
+        history = self.config.setdefault("conversationProtocol", [])
+        text = "A photo was just captured with the camera. Analyze it in the context of the user's request."
+        if self.provider in ("ollama", "local"):
+            history.append({"role": "user", "content": text, "images": [image_base64]})
+        else:
+            history.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
+                ],
+            })
+
+    def _discard_last_camera_image(self) -> None:
+        history = self.config.setdefault("conversationProtocol", [])
+        for index in range(len(history) - 1, -1, -1):
+            if self._message_contains_image(history[index]):
+                history[index] = {
+                    "role": "user",
+                    "content": "A camera photo was captured but the configured model could not process it.",
+                }
+                return
+
+    @staticmethod
+    def _camera_image_error() -> str:
+        return (
+            "The camera captured a photo, but the model could not process it. "
+            "It may not support image input; choose a vision-capable model or check the provider configuration."
+        )
+
     def _execute_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool and retain the complete exchange for the next model turn."""
         result = self.function_handler.handle_call(name, args)
@@ -404,6 +461,10 @@ class LLMAPI:
                 "function_call": {"name": name, "arguments": json.dumps(args)},
             })
             history.append({"role": "function", "name": name, "content": content})
+
+        image_base64 = result.get("image_base64")
+        if isinstance(image_base64, str) and image_base64:
+            self._append_camera_image(image_base64, str(result.get("mime_type", "image/jpeg")))
 
         result = dict(result)
         result["toolCall"] = {"name": name, "arguments": args}
@@ -437,6 +498,11 @@ class LLMAPI:
             return ""
 
         messages = list(self.config.get("conversationProtocol", []))
+        image_attached = bool(
+            messages
+            and isinstance(messages[-1], dict)
+            and self._message_contains_image(messages[-1])
+        )
         if self._is_arch_function_mode():
             messages = self._apply_arch_system_prompt(messages)
 
@@ -450,9 +516,15 @@ class LLMAPI:
             data = self._post(headers, payload)
             self._protocol_trace("tool_reply_response", data)
         except Exception:
+            if image_attached:
+                self._discard_last_camera_image()
+                return self._camera_image_error()
             return ""
 
         if not isinstance(data, dict) or data.get("error"):
+            if image_attached:
+                self._discard_last_camera_image()
+                return self._camera_image_error()
             return ""
 
         self._emit_reasoning(data)
