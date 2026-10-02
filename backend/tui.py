@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 import re
 import shutil
 import socket
@@ -16,6 +18,8 @@ from textual.content import Content
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.widgets import Checkbox, DataTable, Footer, Header, Input, RichLog, Select, Static, TabbedContent, TabPane
+from PIL import Image as PillowImage
+from textual_image.widget import Image as TextualImage
 
 
 class SelectableRichLog(RichLog):
@@ -115,6 +119,7 @@ class TerminalUI(App):
     .audio-controls { height: 3; }
     .audio-controls-row { height: 1; }
     .pane-heading { height: 1; text-style: bold; color: $accent; }
+    .device-name { height: 1; text-style: bold; }
     .audio-controls-row Checkbox {
         width: 1fr;
         height: 1;
@@ -127,6 +132,7 @@ class TerminalUI(App):
     .device-status { height: 3; border: solid $accent; padding: 0 1; }
     .device-tools { height: auto; min-height: 5; border: solid $accent; padding: 1; }
     .device-now-playing { height: auto; border: solid $accent; padding: 1; }
+    .camera-preview { width: 1fr; height: 18; min-height: 8; }
     .device-log { width: 1fr; height: 1fr; min-height: 8; border: solid $accent; }
     """
     BINDINGS = [
@@ -573,6 +579,7 @@ class TerminalUI(App):
             f"Device {session_id}",
             Horizontal(
                 VerticalScroll(
+                    Static(f"Device {session_id}", id=f"name-{session_id}", classes="device-name"),
                     Static("Audio routing", classes="pane-heading"),
                     Horizontal(
                         DeviceCheckbox("Local audio in", value=default_in_local, id=f"audio-in-local-{session_id}"),
@@ -590,6 +597,9 @@ class TerminalUI(App):
                     Static("Available tools\n(none yet)", id=f"tools-{session_id}", classes="device-tools"),
                     Static("Now playing", classes="pane-heading"),
                     Static("", id=f"now-{session_id}", classes="device-now-playing"),
+                    Static("Latest photo", classes="pane-heading"),
+                    Static("No photo captured yet", id=f"camera-status-{session_id}", classes="device-now-playing"),
+                    TextualImage(id=f"camera-image-{session_id}", classes="camera-preview"),
                     id=f"scroll-{session_id}",
                     classes="device-sidebar",
                 ),
@@ -608,6 +618,20 @@ class TerminalUI(App):
         self._device_order.append(session_id)
         self._refresh_device_now_playing(session_id)
         self._refresh_device_tools(session_id)
+
+    def update_device_name(self, session_id: str, name: str) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.update_device_name, session_id, name)
+            return
+        try:
+            self.query_one(f"#name-{session_id}", Static).update(name)
+        except Exception:
+            pass
+        try:
+            tabs = self.query_one("#tabs", TabbedContent)
+            tabs.get_tab(self._tab_id(session_id)).label = name
+        except Exception:
+            pass
 
     def remove_device_tab(self, session_id: str) -> None:
         if threading.get_ident() != self._main_thread_id:
@@ -685,6 +709,25 @@ class TerminalUI(App):
             return
         self.device_response[session_id] = text
         self._refresh_device_now_playing(session_id)
+
+    def update_camera_image(self, session_id: str, image_base64: str) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.update_camera_image, session_id, image_base64)
+            return
+
+        try:
+            image_bytes = base64.b64decode(image_base64, validate=True)
+            with PillowImage.open(BytesIO(image_bytes)) as image_file:
+                image = image_file.convert("RGB")
+            self.query_one(f"#camera-image-{session_id}", TextualImage).image = image
+            self.query_one(f"#camera-status-{session_id}", Static).update("Photo captured")
+        except Exception as exc:
+            try:
+                self.query_one(f"#camera-status-{session_id}", Static).update(
+                    f"Photo preview unavailable: {exc}"
+                )
+            except Exception:
+                pass
 
     def update_thinking(self, session_id: str, text: str) -> None:
         """Append newly streamed reasoning to the device log, flushed at sentence boundaries.
@@ -777,6 +820,11 @@ def add_device_tab(session_id: str, kind: str = "Device") -> None:
         _app.add_device_tab(session_id, kind)
 
 
+def update_device_name(session_id: str, name: str) -> None:
+    if _app is not None:
+        _app.update_device_name(session_id, name)
+
+
 def remove_device_tab(session_id: str) -> None:
     if _app is not None:
         _app.remove_device_tab(session_id)
@@ -810,6 +858,11 @@ def update_prompt(session_id: str, text: str) -> None:
 def update_response(session_id: str, text: str) -> None:
     if _app is not None:
         _app.update_response(session_id, text)
+
+
+def update_camera_image(session_id: str, image_base64: str) -> None:
+    if _app is not None:
+        _app.update_camera_image(session_id, image_base64)
 
 
 def update_thinking(session_id: str, text: str) -> None:

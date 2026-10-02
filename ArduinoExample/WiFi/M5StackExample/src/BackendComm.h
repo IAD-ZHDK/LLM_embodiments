@@ -335,6 +335,7 @@ namespace BackendComm
     inline void _sendDeviceInfo()
     {
         JsonDocument doc;
+        doc["deviceInfo"]["deviceName"] = kDeviceName;
         doc["deviceInfo"]["persona"] = kSystemPrompt;
         JsonObject generation = doc["deviceInfo"]["generation"].to<JsonObject>();
         generation["model"] = kGenerationSettings.model;

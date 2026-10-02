@@ -62,6 +62,7 @@ class DeviceSession:
             on_thinking=self._on_llm_thinking,
         )
         self.stt: Optional[SpeechToTextWorker] = None
+        self.device_name = ""
         self.audio_mic_muted = False
         self.audio_speaker_muted = False
         self.local_tts_started_at = 0.0
@@ -577,6 +578,9 @@ async def _handle_llm_response(session: DeviceSession, return_object: Dict[str, 
     role = return_object.get("role")
     message_preview = str(return_object.get("message", ""))[:160].replace("\n", " ")
     print(f"🧭 [{session.session_id}] LLM response role={role} message={message_preview!r}")
+    image_base64 = return_object.get("image_base64")
+    if isinstance(image_base64, str) and image_base64:
+        tui.update_camera_image(session.session_id, image_base64)
     tool_call = return_object.get("toolCall")
     if isinstance(tool_call, dict):
         _log_tool_call(session, str(tool_call.get("name", "?")), tool_call.get("arguments"), return_object)
@@ -898,6 +902,12 @@ async def _push_device_config(session: DeviceSession) -> None:
 def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> None:
     # Applied to this session's own config only, so it takes effect immediately for this device
     # without affecting any other connected device.
+    device_name = device_info.get("deviceName")
+    if isinstance(device_name, str) and device_name.strip():
+        session.device_name = device_name.strip()
+        tui.update_device_name(session.session_id, session.device_name)
+        print(f"🏷️  [{session.session_id}] Device name: {session.device_name}")
+
     persona = device_info.get("persona")
     if isinstance(persona, str) and persona.strip():
         protocol = session.config.setdefault("conversationProtocol", [])

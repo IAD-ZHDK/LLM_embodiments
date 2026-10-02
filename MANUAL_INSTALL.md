@@ -56,7 +56,7 @@ The default LLM provider is Ollama. Install Ollama separately, then fetch the mo
 ollama pull gemma4:e4b
 ```
 
-The model can call `take_picture` to capture a still from the backend computer's camera; change `[camera].deviceIndex` in `config.toml` if needed. The M5Stack CoreS3 example also exposes its built-in camera through the same tool. Its firmware requires M5Stack Board Manager 3.2.2 or newer and M5Unified 0.2.11 or newer. The configured model must support image input; if it rejects the photo, the backend reports that instead of silently failing.
+The model can call `take_picture` to capture a still from the backend computer's camera; change `[camera].deviceIndex` in `config.toml` if needed. The M5Stack CoreS3 example also exposes its built-in camera through the same tool. Its firmware requires M5Stack Board Manager 3.2.2 or newer and M5Unified 0.2.11 or newer. Captured photos appear in the device tab's **Latest photo** section in the terminal UI. The configured model must support image input; if it rejects the photo, the backend reports that instead of silently failing.
 
 The default speech-to-text backend is Whisper with the `small.en` model. `faster-whisper` downloads that model on first use. To use Vosk instead, change `speech.sttBackend` in `config.toml` and set `speech.speechToTextModel` to a model-folder name under `backend/STTmodels/`.
 

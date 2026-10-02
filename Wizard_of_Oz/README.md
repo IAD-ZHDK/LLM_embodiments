@@ -1,12 +1,13 @@
 # Wizard of Oz test server
 
-A drop-in replacement for the real Python backend's ESP32-facing side, with no LLM involved.
+A drop-in replacement for the real Python backend's arduino-facing side, with no LLM involved.
 Use this to test an Arduino device (mic, sensors, tool calls) end-to-end without touching
 Ollama/OpenAI, STT, or TTS — a human ("the wizard") plays the role of the model instead.
 
 - **Audio**: streamed straight to your computer's speakers as it arrives, while Whisper also prints
   live transcription and PCM signal levels for diagnostics.
-- **Text out**: nothing is spoken back to the device. No text-to-speech.
+- **Text out**: `say <text>` shows the text on the device and speaks it through the device speaker
+  using Piper (`en_GB-alan-low.onnx`, the fastest voice from `backend/TTSmodels/`).
 - **Tools**: whatever the device declares on connect (its persona + MCP-style tool list, the
   same `deviceInfo` message the real backend consumes) is printed to the terminal. You can
   call any of them yourself from a simple console prompt.
@@ -36,6 +37,14 @@ Flash/power on the M5Stack as usual and connect it to the same WiFi network as t
 
 ## Using it
 
+Open the control panel at `http://<this machine's IP>:3000/` (the URL is printed on startup). Pick a
+function from the dropdown, set its parameter (an on/off select, number or text field depending on the
+tool's type), optionally type a spoken reply, and press Send. The function call and the reply (shown
+and spoken on the device) go out together; leave the function on "(none)" to only talk. Device
+notifications and transcripts appear in the event list.
+
+The console prompt below does the same from the terminal.
+
 Once the device connects, you'll see its persona and declared tools printed, e.g.:
 
 ```
@@ -49,6 +58,7 @@ Once the device connects, you'll see its persona and declared tools printed, e.g
 
 At the `woz>` prompt:
 
+- `say <text>` — send a spoken reply to the device (override the voice with `WIZARD_TTS_MODEL`)
 - `<tool_name> [value]` — send that tool call to the device, e.g. `set_vibration 1`
 - `tools` — reprint the persona + tool list
 - `quit` / `exit` — stop the console prompt (the server keeps running; Ctrl+C to fully stop)

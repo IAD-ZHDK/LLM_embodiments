@@ -15,3 +15,4 @@ uvicorn
 pyserial
 textual
 opencv-python-headless
+textual-image[textual]>=0.14.1

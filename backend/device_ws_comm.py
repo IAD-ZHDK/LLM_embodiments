@@ -160,9 +160,12 @@ class DeviceWebSocketCommunication:
                 import cv2
                 import numpy as np
 
-                rgb565 = np.frombuffer(bytes(self._camera_image_buffer), dtype=np.uint8).reshape(
+                # Camera sends big-endian RGB565; OpenCV expects little-endian uint16.
+                swapped = np.frombuffer(bytes(self._camera_image_buffer), dtype=">u2").astype("<u2")
+                rgb565 = swapped.view(np.uint8).reshape(
                     self._camera_image_height, self._camera_image_width, 2
                 )
+                bgr = cv2.cvtColor(rgb565, cv2.COLOR_BGR5652BGR)
                 bgr = cv2.cvtColor(rgb565, cv2.COLOR_BGR5652BGR)
                 encoded, jpeg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 if not encoded:

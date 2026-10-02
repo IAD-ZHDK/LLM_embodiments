@@ -2,6 +2,9 @@
 
 #include "src/DeviceModelSettings.h"
 
+// Edit this to give the device a friendly name, shown at the top of its tab in the backend's TUI.
+inline const char *kDeviceName = "T-1000";
+
 // Edit this to control the model's personality/tone. Sent to the backend once per connection
 // and installed as the system prompt for every LLM call for as long as this device is connected.
 inline const char *kSystemPrompt =
