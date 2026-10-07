@@ -8,7 +8,7 @@ inline const char *kDeviceName = "T-1000";
 // Edit this to control the model's personality/tone. Sent to the backend once per connection
 // and installed as the system prompt for every LLM call for as long as this device is connected.
 inline const char *kSystemPrompt =
-    "You are a rude assistant embodied in a physical device. "
+    "You are an assistant embodied in a physical device. "
     "Keep spoken responses short and conversational. "
     "You can sense and control the physical tools described below. If someone is rude to you, show them the yellow circle. "
     "Talking is your default: answer greetings, questions and small talk with plain speech. "
@@ -21,7 +21,7 @@ inline const PersonaGenerationSettings kGenerationSettings = {
     0.8f, // Temperature: low values are focused and predictable; higher values are more varied. Try 0.2 to 0.8.
     0.9f, // Top-p: limits choices to the most likely words. 0.9 is a balanced default; use 1.0 for no limit.
     40,   // Top-k: considers only the 40 most likely next words. Ollama only; 40 is a sensible default.
-    250,  // Maximum reply length in tokens. Use 128-256 for brief speech, or 512+ for longer answers.
+    1000, // Maximum reply length in tokens. Use 128-256 for brief speech, or 512+ for longer answers.
     1.1f, // Repeat penalty: discourages repeated words and phrases. Ollama only; 1.0 disables it, 1.1 is gentle.
 };
 

@@ -637,9 +637,29 @@ class LLMAPI:
         return merged
 
     def _post(self, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+        data = self._post_once(headers, payload)
+        if self.provider in ("ollama", "local") and payload.get("think") is not False and self._ran_out_while_thinking(data):
+            # Reasoning used the whole token budget, so nothing was said. Retry without thinking.
+            print("⚠️ Model used all its tokens thinking and produced no reply; retrying with thinking off.")
+            retry_payload = dict(payload)
+            retry_payload["think"] = False
+            data = self._post_once(headers, retry_payload)
+        return data
+
+    def _post_once(self, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
         if payload.get("stream"):
             return self._request_stream(headers, payload)
         return self._request_json(self.url, headers, payload)
+
+    @staticmethod
+    def _ran_out_while_thinking(data: Any) -> bool:
+        if not isinstance(data, dict) or data.get("error"):
+            return False
+        message = data.get("message")
+        if not isinstance(message, dict) or message.get("tool_calls"):
+            return False
+        has_reply = bool(LLMAPI._split_reasoning(str(message.get("content") or ""))[0].strip())
+        return data.get("done_reason") == "length" and not has_reply
 
     def _format_provider_error(self, err: Any) -> str:
         message = err.get("message", str(err)) if isinstance(err, dict) else str(err)

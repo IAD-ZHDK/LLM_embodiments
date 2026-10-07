@@ -25,7 +25,7 @@ namespace BackendComm
     static const uint8_t kDeviceAudioChannel = 1;
     static const uint8_t kDeviceAudioVolume = 255;
     static const uint8_t kToneChannel = 0;
-    static const uint8_t kToneVolume = 36;
+    static const uint8_t kToneVolume = 200;
     static int16_t audioBuffer[kAudioChunkSamples];
     static int16_t deviceAudioBuffers[3][kDeviceAudioChunkSamples];
     static uint8_t deviceAudioBufferIndex = 0;
@@ -172,35 +172,64 @@ namespace BackendComm
     // CoreS3 routes its ES7210 microphones and AW88298 speaker over the same I2S clocks.
     inline void _beginToneOutput()
     {
+        // Fully tear down any TTS playback and the mic so the speaker is re-initialised cleanly.
+        if (deviceSpeaking)
+        {
+            deviceSpeaking = false;
+            audioStreamEnded = false;
+            audioPlaybackEndsAt = 0;
+            _updateMicStatus();
+        }
+        micResumeAt = 0;
         if (!useAnalogMic && M5.Mic.isEnabled())
         {
             while (M5.Mic.isRecording())
                 M5.delay(1);
             M5.Mic.end();
         }
+        M5.Speaker.stop();
+        M5.Speaker.end();
+        M5.delay(20);
         M5.Speaker.begin();
         M5.Speaker.setVolume(180);
         M5.Speaker.setChannelVolume(kToneChannel, kToneVolume);
     }
 
     // frequency == 0 plays silence instead of a tone, so sequences can include pauses.
+    // Long tones are played in chunks with continuous phase and a short fade at both ends.
     inline void _playToneSegment(uint32_t frequency, uint32_t durationMs)
     {
-        if (frequency > 0)
-        {
-            uint32_t clampedFrequency = constrain(frequency, 60UL, 4000UL);
-            size_t samples = min(static_cast<size_t>((durationMs * kSampleRate) / 1000UL), sizeof(toneBuffer) / sizeof(toneBuffer[0]));
-            for (size_t index = 0; index < samples; index++)
-                toneBuffer[index] = static_cast<int16_t>(sinf(2.0f * PI * clampedFrequency * index / kSampleRate) * 32767.0f);
-            M5.Speaker.playRaw(toneBuffer, samples, kSampleRate, false, 1, kToneChannel, true);
-            Serial.printf("[Speaker] Sine tone %luHz for %lums.\n", (unsigned long)clampedFrequency, (unsigned long)durationMs);
-        }
-        else
+        if (frequency == 0)
         {
             Serial.printf("[Speaker] Pause for %lums.\n", (unsigned long)durationMs);
+            M5.delay(durationMs);
+            return;
         }
-        // Blocks for the segment's duration so the shared tone buffer isn't overwritten mid-playback.
-        M5.delay(durationMs);
+        uint32_t clampedFrequency = constrain(frequency, 60UL, 4000UL);
+        Serial.printf("[Speaker] Sine tone %luHz for %lums.\n", (unsigned long)clampedFrequency, (unsigned long)durationMs);
+        const size_t totalSamples = (durationMs * kSampleRate) / 1000UL;
+        const size_t chunkSamples = sizeof(toneBuffer) / sizeof(toneBuffer[0]);
+        const size_t fadeSamples = min(static_cast<size_t>(kSampleRate / 200), totalSamples / 2);
+        size_t done = 0;
+        while (done < totalSamples)
+        {
+            size_t n = min(chunkSamples, totalSamples - done);
+            for (size_t i = 0; i < n; i++)
+            {
+                size_t pos = done + i;
+                float gain = 1.0f;
+                if (pos < fadeSamples)
+                    gain = (float)pos / fadeSamples;
+                else if (totalSamples - pos <= fadeSamples)
+                    gain = (float)(totalSamples - pos) / fadeSamples;
+                float phase = 2.0f * PI * fmodf((float)clampedFrequency * pos / kSampleRate, 1.0f);
+                toneBuffer[i] = static_cast<int16_t>(sinf(phase) * 24000.0f * gain);
+            }
+            M5.Speaker.playRaw(toneBuffer, n, kSampleRate, false, 1, kToneChannel, true);
+            // Block until this chunk is done so the shared buffer isn't overwritten mid-playback.
+            M5.delay((n * 1000UL) / kSampleRate + 5);
+            done += n;
+        }
     }
 
     inline void playTone(uint32_t frequency, uint32_t durationMs)

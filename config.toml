@@ -41,7 +41,7 @@ enabled = true
 # and (in a future version) multiple simultaneous transcription sessions. No streaming partials; it
 # transcribes each utterance after a short pause using the same voice-activity detection as "vosk".
 sttBackend = "whisper"  # "vosk" | "whisper"
-speechToTextModel = "small.en"  # Whisper model name (sttBackend = "whisper"); use a Vosk model folder for sttBackend = "vosk"
+speechToTextModel = "tiny.en"  # Whisper model name (sttBackend = "whisper"); use a Vosk model folder for sttBackend = "vosk"
 textToSpeechModel = "en_GB-northern_english_male-medium.onnx"
 
 # Only used when sttBackend = "whisper". Ignored otherwise.
@@ -77,6 +77,7 @@ max_tokens = 8192  # Number between 1 and 8192. The maximum number of tokens to 
 # Ollama only: reasoning before answering. Restart the backend and reconnect the device after changing it.
 # Options: false (off, fastest) | true (on) | "low" | "medium" | "high" (effort levels).
 # Gemma 4 (tested with gemma4:e4b) ignores the levels: low/medium/high behave like true. Use false to disable.
+think = false
 # Most thinking models (e.g. Qwen3, DeepSeek-R1) accept only true/false; models without thinking
 # support (e.g. llama3.2) may error, so remove this line for them. max_tokens also limits thinking text.
 

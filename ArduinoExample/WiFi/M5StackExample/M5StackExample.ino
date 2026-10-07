@@ -47,9 +47,9 @@ static camera_config_t cameraConfig = {
     .pixel_format = PIXFORMAT_RGB565,
     .frame_size = FRAMESIZE_QVGA,
     .jpeg_quality = 0,
-    .fb_count = 1,
+    .fb_count = 2, // CAMERA_GRAB_LATEST only discards stale frames with 2+ buffers
     .fb_location = CAMERA_FB_IN_PSRAM,
-    .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
+    .grab_mode = CAMERA_GRAB_LATEST,
     .sccb_i2c_port = -1,
 };
 
@@ -105,6 +105,11 @@ void take_picture(const String &value)
         BackendComm::sendCameraError("CoreS3 camera initialization failed.");
         return;
     }
+
+    // Drop one buffered frame so the one we send was exposed after the request, not before.
+    camera_fb_t *stale = esp_camera_fb_get();
+    if (stale)
+        esp_camera_fb_return(stale);
 
     camera_fb_t *frame = esp_camera_fb_get();
     if (!frame)
