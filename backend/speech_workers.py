@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+
+
+def _utf8_env() -> Dict[str, str]:
+    """Child scripts print non-ASCII text; Windows pipes would otherwise default to cp1252."""
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 class SpeechToTextWorker:
@@ -44,6 +53,7 @@ class SpeechToTextWorker:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=_utf8_env(),
                 bufsize=0,
             )
         else:
@@ -54,6 +64,9 @@ class SpeechToTextWorker:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=_utf8_env(),
                 bufsize=1,
             )
         if source == "remote":
@@ -172,6 +185,9 @@ class TextToSpeechWorker:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_utf8_env(),
             bufsize=1,
         )
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)

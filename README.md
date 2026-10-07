@@ -21,7 +21,7 @@ chmod +x setup.sh run.sh
 The setup script creates the Python environment and installs dependencies. It does not install Ollama; install it from [ollama.com](https://ollama.com/download), then download the default model:
 
 ```bash
-ollama pull gemma4:e4b
+ollama pull gemma4:e4bbackend\venv\Scripts\python.exe -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
 ./run.sh
 ```
 
