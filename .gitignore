@@ -27,4 +27,4 @@ python-scripts/venv/
 .kiosk_restart_request
 
 # Real device WiFi/backend credentials (see WifiSecrets.example.h for the template)
-ArduinoExample/WiFi/M5StackExample/WifiSecrets.h
+WifiSecrets.h
