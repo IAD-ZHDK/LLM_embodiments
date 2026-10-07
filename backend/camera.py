@@ -22,6 +22,10 @@ def capture_image(device_index: int = 0) -> Dict[str, Any]:
                 "message": f"Could not open camera {device_index}. Check camera permissions and close other camera apps.",
             }
 
+        # A freshly opened webcam returns buffered/dark frames first; discard them to get the current scene.
+        for _ in range(10):
+            camera.read()
+
         success, frame = camera.read()
         if not success or frame is None:
             return {"role": "error", "message": "The camera opened but did not return an image."}

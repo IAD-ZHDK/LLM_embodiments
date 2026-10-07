@@ -19,6 +19,7 @@ import tomlkit
 
 try:
     from .config_loader import load_config
+    from .dataset_logger import new_dataset_path, save_conversation
     from .device_ws_comm import DeviceWebSocketCommunication
     from .function_handler import FunctionHandler
     from .llm_api import LLMAPI
@@ -28,6 +29,7 @@ try:
     from . import tui
 except ImportError:
     from config_loader import load_config
+    from dataset_logger import new_dataset_path, save_conversation
     from device_ws_comm import DeviceWebSocketCommunication
     from function_handler import FunctionHandler
     from llm_api import LLMAPI
@@ -63,6 +65,7 @@ class DeviceSession:
         )
         self.stt: Optional[SpeechToTextWorker] = None
         self.device_name = ""
+        self.dataset_path: Optional[Path] = None
         self.audio_mic_muted = False
         self.audio_speaker_muted = False
         self.local_tts_started_at = 0.0
@@ -641,6 +644,23 @@ async def _handle_llm_response(session: DeviceSession, return_object: Dict[str, 
         )
 
 
+def _save_dataset(session: DeviceSession) -> None:
+    if not state.config.get("dataCollection", {}).get("enabled", False):
+        return
+    try:
+        if session.dataset_path is None:
+            session.dataset_path = new_dataset_path("backend", session.device_name or session.session_id)
+        settings = session.config.get("llmSettings", {})
+        save_conversation(
+            session.dataset_path,
+            session.config.get("conversationProtocol", []),
+            session.llm_api._tools_for_prompt(),
+            {"source": "backend", "device": session.device_name, "model": settings.get("model", "")},
+        )
+    except Exception as exc:
+        print(f"⚠️ [{session.session_id}] Could not save dataset: {exc}")
+
+
 async def _call_llm(session: DeviceSession, text: str, role: str, source: str) -> Optional[Dict[str, Any]]:
     if not session.llm_api:
         return None
@@ -665,6 +685,7 @@ async def _call_llm(session: DeviceSession, text: str, role: str, source: str) -
                 response["_processingMs"] = round(elapsed_ms)
             tui.reset_thinking(session.session_id)
             print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} completed in {elapsed_ms / 1000:.2f}s")
+            _save_dataset(session)
             return response
     except Exception as exc:
         print(f"⚠️ LLM[{req_id}] [{session.session_id}] {source} failed: {exc}")

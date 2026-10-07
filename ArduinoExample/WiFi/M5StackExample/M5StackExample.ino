@@ -113,6 +113,12 @@ void take_picture(const String &value)
         return;
     }
 
+    // Shutter feedback: white flash plus a short high tone (blocks ~80 ms), then restore the UI.
+    M5.Lcd.fillScreen(WHITE);
+    BackendComm::playTone(1800, 80);
+    redrawDisplay();
+    drawMicLevelBar();
+
     bool sent = frame->format == PIXFORMAT_RGB565 &&
                 BackendComm::sendCameraFrame(frame->buf, frame->len, frame->width, frame->height);
     esp_camera_fb_return(frame);

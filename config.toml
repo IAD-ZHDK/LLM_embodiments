@@ -30,6 +30,11 @@ deviceTtsEnabled = true
 # password = "YourNetworkPassword"
 # backendUrl = "ws://192.168.1.10:3000/device"
 
+# Saves each conversation as one JSON line in logs/dataset/<device name>/ (git-ignored) for fine-tuning.
+# Wizard_of_Oz/server.py writes to the same folders in the same format; combine with `cat logs/dataset/<device>/*.jsonl`.
+[dataCollection]
+enabled = true
+
 [speech]
 # "vosk" - lightweight, CPU-only, streaming partial results. Good default for Raspberry Pi-class devices.
 # "whisper" - faster-whisper (CTranslate2). More accurate, supports CUDA GPUs, better for multiple GPUs
@@ -46,7 +51,7 @@ deviceIndex = 0        # Which GPU to use when device resolves to "cuda" (e.g. 1
 # Set this per instance/session once multiple simultaneous transcriptions across several GPUs are supported.
 computeType = "auto"  # "auto" | "int8" | "float16" | "float32" - "auto" picks float16 on GPU, int8 on CPU
 language = "en"      # "auto" detects the spoken language; set "en" or "de" to skip detection and speed things up
-
+ 
 # Single STT model name for both languages (multilingual Whisper models like "small" handle en/de
 # in the same model). Vosk models are downloaded to backend/STTmodels/; Whisper models are
 # downloaded automatically by faster-whisper on first use and cached locally.
@@ -69,9 +74,12 @@ model = "gemma4:e4b"  # default Ollama model; change to another supported model 
 # Allow deviceInfo to override the configured model until a model is chosen in the TUI.
 allowDeviceModelOverride = false
 max_tokens = 8192  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
-# Ollama only: lower reasoning effort for models that support levels (for example, Gemma 4).
-# This is a preference, not a strict token or time limit; use false to disable thinking.
-think = "low"
+# Ollama only: reasoning before answering. Restart the backend and reconnect the device after changing it.
+# Options: false (off, fastest) | true (on) | "low" | "medium" | "high" (effort levels).
+# Gemma 4 (tested with gemma4:e4b) ignores the levels: low/medium/high behave like true. Use false to disable.
+# Most thinking models (e.g. Qwen3, DeepSeek-R1) accept only true/false; models without thinking
+# support (e.g. llama3.2) may error, so remove this line for them. max_tokens also limits thinking text.
+think = false
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
 url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint
 

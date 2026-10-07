@@ -42,6 +42,9 @@ except Exception:
 BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
+from config_loader import load_config
+from dataset_logger import new_dataset_path, save_conversation, tool_schema
+
 try:
     from faster_whisper import WhisperModel
     from Microphone.vad_utils import VAD
@@ -86,6 +89,77 @@ transcription_thread: Optional[threading.Thread] = None
 tts_voice = None
 tts_lock = threading.Lock()
 events: collections.deque = collections.deque(maxlen=50)
+
+convo_lock = threading.Lock()
+convo_messages: List[Dict[str, Any]] = []
+convo_path: Optional[Path] = None
+convo_meta: Dict[str, Any] = {}
+heard_pending: List[str] = []
+
+
+def _save_convo() -> None:
+    if convo_path is not None:
+        tools = [tool_schema(t) for t in device_tools if isinstance(t, dict)]
+        save_conversation(convo_path, convo_messages, tools, convo_meta)
+
+
+def _record(*messages: Dict[str, Any]) -> None:
+    with convo_lock:
+        if heard_pending:
+            convo_messages.append({"role": "user", "content": " ".join(heard_pending)})
+            heard_pending.clear()
+        convo_messages.extend(messages)
+        _save_convo()
+
+
+def _start_conversation(device_info: Dict[str, Any]) -> None:
+    """Seed the dataset conversation exactly as the backend builds a device session's protocol."""
+    global convo_messages, convo_path, convo_meta
+    try:
+        global_system = [m for m in load_config(BACKEND_DIR.parent).get("conversationProtocol", []) if m.get("role") == "system"]
+    except Exception as exc:
+        print(f"⚠️ Could not read config.toml for the dataset system prompt: {exc}")
+        global_system = []
+
+    messages: List[Dict[str, Any]] = [dict(m) for m in global_system[:1]]
+    persona = str(device_info.get("persona", "")).strip()
+    if persona:
+        guidance = [
+            f"- Notification `{g.get('name')}`: {g.get('instruction')}"
+            for g in device_info.get("notificationGuidance", [])
+            if isinstance(g, dict) and g.get("name") and g.get("instruction")
+        ]
+        if guidance:
+            persona += "\n\nDevice notification instructions:\n" + "\n".join(guidance)
+        messages.append({"role": "system", "content": persona})
+    for turn in device_info.get("history", []):
+        if isinstance(turn, dict) and turn.get("role") in ("user", "assistant") and str(turn.get("content", "")).strip():
+            messages.append({"role": turn["role"], "content": str(turn["content"]).strip()})
+
+    device_name = str(device_info.get("deviceName", "")).strip()
+    with convo_lock:
+        convo_messages = messages
+        heard_pending.clear()
+        convo_path = new_dataset_path("wizard_of_oz", device_name)
+        convo_meta = {"source": "wizard_of_oz", "device": device_name, "model": "human"}
+    print(f"💾 Recording conversation to {convo_path}")
+
+
+def _tool_arguments(name: str, value: str) -> Dict[str, Any]:
+    tool = next((t for t in device_tools if isinstance(t, dict) and t.get("name") == name), {})
+    kind = str(tool.get("dataType", "string"))
+    if kind == "none":
+        return {}
+    try:
+        if kind in ("bool", "boolean"):
+            return {"value": value.strip().lower() in ("1", "true", "on", "yes")}
+        if kind in ("int", "integer"):
+            return {"value": int(value)}
+        if kind in ("float", "number"):
+            return {"value": float(value)}
+    except ValueError:
+        pass
+    return {"value": value}
 
 
 def _log_event(text: str) -> None:
@@ -231,6 +305,8 @@ def _transcription_loop() -> None:
             print(f"📝 Transcript: {text or '(no speech recognized)'}")
             if text:
                 _log_event(f"heard: {text}")
+                with convo_lock:
+                    heard_pending.append(text)
         except Exception as exc:
             print(f"⚠️ Whisper transcription failed: {exc}")
 
@@ -322,6 +398,7 @@ async def _say(text: str) -> None:
         print("⚠️ No device connected.")
         return
     ws = device_ws
+    _record({"role": "assistant", "content": text})
     await ws.send_text(json.dumps({"assistantResponse": text}))
     print(f"➡️  Said: {text!r}")
     await asyncio.get_running_loop().run_in_executor(None, _stream_tts_to_device, ws, text)
@@ -332,6 +409,14 @@ async def _send_tool_call(name: str, value: str) -> None:
         print("⚠️ No device connected.")
         return
     payload = {"toolCall": {"name": name, "value": value}}
+    arguments = _tool_arguments(name, value)
+    _record(
+        {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": name, "arguments": arguments}}]},
+        {"role": "tool", "tool_name": name, "content": json.dumps({
+            "message": f"function_call complete: {name}",
+            "value": json.dumps({"Writing to Device": f"{name}{value}".strip()}),
+        })},
+    )
     await device_ws.send_text(json.dumps(payload))
     print(f"➡️  Sent tool call: {name} = {value!r}")
 
@@ -515,6 +600,11 @@ async def websocket_device(ws: WebSocket) -> None:
             if isinstance(notification, dict):
                 print(f"🔔 Notification: {notification.get('name')} = {notification.get('value')}")
                 _log_event(f"notification: {notification.get('name')} = {notification.get('value')}")
+                _record({"role": "system", "content": json.dumps({
+                    "description": str(notification.get("name", "")),
+                    "value": str(notification.get("value", "")),
+                    "type": "string",
+                })})
             elif data.get("mic") in ("muted", "unmuted"):
                 print(f"🎙️  Mic: {data['mic']}")
             elif isinstance(data.get("deviceInfo"), dict):
@@ -522,6 +612,7 @@ async def websocket_device(ws: WebSocket) -> None:
                 device_persona = str(device_info.get("persona", ""))
                 tools = device_info.get("tools")
                 device_tools = tools if isinstance(tools, list) else []
+                _start_conversation(device_info)
                 _print_tools()
     except WebSocketDisconnect:
         pass

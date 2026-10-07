@@ -142,6 +142,32 @@ class LLMAPI:
             text = text[:limit] + "... [truncated]"
         print(f"🔎 LLM DEBUG {label}: {text}")
 
+    def _compact_request(self, data: Any) -> Any:
+        """Logs only messages added since the previous request, and tool lists only when they change."""
+        if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+            return data
+        compact = dict(data)
+        messages = data["messages"]
+        first = json.dumps(messages[:1], sort_keys=True, default=str)
+        seen = getattr(self, "_traced_count", 0)
+        if len(messages) < seen or first != getattr(self, "_traced_first", first):
+            seen = 0
+        self._traced_count = len(messages)
+        self._traced_first = first
+        compact["messages"] = messages[seen:]
+        compact["messagesAlreadyLogged"] = seen
+
+        digests = getattr(self, "_traced_tool_digests", {})
+        self._traced_tool_digests = digests
+        for key in ("tools", "functions"):
+            if key in compact:
+                digest = json.dumps(compact[key], sort_keys=True, default=str)
+                if digests.get(key) == digest:
+                    compact[key] = "[unchanged]"
+                else:
+                    digests[key] = digest
+        return compact
+
     def _protocol_trace(self, event: str, value: Any) -> None:
         if not self._debug_enabled():
             return
@@ -150,7 +176,7 @@ class LLMAPI:
             "event": event,
             "provider": self.provider,
             "model": self.config.get("llmSettings", {}).get("model", self.model),
-            "data": self._redact_image_data(value),
+            "data": self._redact_image_data(self._compact_request(value)),
         }
         try:
             log_path = Path(__file__).resolve().parent.parent / "logs" / "llm_protocol.jsonl"
@@ -408,6 +434,10 @@ class LLMAPI:
 
     def _append_camera_image(self, image_base64: str, mime_type: str) -> None:
         history = self.config.setdefault("conversationProtocol", [])
+        # Earlier photos stay in context otherwise and the model keeps describing them.
+        for index, message in enumerate(history):
+            if self._message_contains_image(message):
+                history[index] = {"role": "user", "content": "An earlier camera photo was taken here; it is no longer available."}
         text = "A photo was just captured with the camera. Analyze it in the context of the user's request."
         if self.provider in ("ollama", "local"):
             history.append({"role": "user", "content": text, "images": [image_base64]})
