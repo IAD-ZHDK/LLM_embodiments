@@ -63,8 +63,10 @@ def _cuda_available() -> bool:
         import ctypes
         if sys.platform == "win32":
             ctypes.WinDLL("cublas64_12.dll")
+            ctypes.WinDLL("cudnn64_9.dll")
         elif sys.platform.startswith("linux"):
             ctypes.CDLL("libcublas.so.12")
+            ctypes.CDLL("libcudnn.so.9")
         return True
     except Exception:
         return False
