@@ -35,6 +35,10 @@ TTS_MODELS = {
     "de_DE-thorsten-medium.onnx": {
         "model": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx",
         "config": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json"
+    },
+    "en_GB-northern_english_male-medium.onnx": {
+        "model": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx",
+        "config": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
     }
    
 }
@@ -533,7 +537,12 @@ def _process_tts_queue():
 
         try:
             model_name = resolve_tts_model_name(request["model"])
-            if not request["text"] or not model_name:
+            if not request["text"]:
+                continue
+            if not model_name:
+                error = f"Unknown TTS model '{request['model']}' for request {request_id}"
+                print(error, file=sys.stderr)
+                send_message("tts", f"error: {error}", request_id, {"output": output})
                 continue
             if output == "local" and output_device is None:
                 output_device = find_respeaker_device()
@@ -596,7 +605,16 @@ def main():
             output = msg.get("output", "local") if isinstance(msg, dict) else "local"
             request_id = str(msg.get("requestId", "")) if isinstance(msg, dict) else ""
             model_name = resolve_tts_model_name(raw_model)
-            if not text or not model_name:
+            if not text:
+                continue
+            if not model_name:
+                error = (
+                    f"Unknown TTS model '{raw_model}': not a known downloadable voice and not found "
+                    f"in {MODEL_PATH} (expected both the .onnx and .onnx.json files). "
+                    f"Check [speech].textToSpeechModel in config.toml."
+                )
+                print(error, file=sys.stderr)
+                send_message("tts", f"error: {error}", request_id)
                 continue
 
             request = {
