@@ -37,11 +37,35 @@ RATE = 16000  # must match the PCM16 mono sample rate streamed by the remote dev
 VAD_FRAME_BYTES = RATE * 30 // 1000 * 2
 
 
+def _register_pip_cuda_dlls() -> None:
+    """Make CUDA DLLs installed via pip (nvidia-cublas-cu12, nvidia-cudnn-cu12) loadable on Windows."""
+    if sys.platform != "win32":
+        return
+    import glob
+    import os
+    for base in sys.path:
+        for bin_dir in glob.glob(os.path.join(base, "nvidia", "*", "bin")):
+            try:
+                os.add_dll_directory(bin_dir)
+            except OSError:
+                pass
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+
+
 def _cuda_available() -> bool:
     """Best-effort GPU probe for the "auto" whisper device setting."""
     try:
+        _register_pip_cuda_dlls()
         import ctranslate2
-        return ctranslate2.get_cuda_device_count() > 0
+        if ctranslate2.get_cuda_device_count() <= 0:
+            return False
+        # A GPU can be present without the CUDA runtime libraries; only transcribe() would fail later.
+        import ctypes
+        if sys.platform == "win32":
+            ctypes.WinDLL("cublas64_12.dll")
+        elif sys.platform.startswith("linux"):
+            ctypes.CDLL("libcublas.so.12")
+        return True
     except Exception:
         return False
 

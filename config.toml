@@ -79,7 +79,7 @@ max_tokens = 8192  # Number between 1 and 8192. The maximum number of tokens to 
 # Gemma 4 (tested with gemma4:e4b) ignores the levels: low/medium/high behave like true. Use false to disable.
 # Most thinking models (e.g. Qwen3, DeepSeek-R1) accept only true/false; models without thinking
 # support (e.g. llama3.2) may error, so remove this line for them. max_tokens also limits thinking text.
-think = false
+
 user_id = "1"  # A unique identifier for the user. Used to track API usage.
 url = "http://127.0.0.1:11434/api/chat"  # Ollama chat endpoint
 

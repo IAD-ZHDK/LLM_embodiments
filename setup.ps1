@@ -41,6 +41,21 @@ Write-Host "Installing Python dependencies..."
 & $VenvPython -m pip install --upgrade pip wheel setuptools
 & $VenvPython -m pip install -r "backend\requirements.txt"
 
+# Optional GPU acceleration for Whisper: faster-whisper needs the CUDA 12 cuBLAS/cuDNN runtime DLLs.
+# Without them the backend falls back to CPU automatically, so failures here are non-fatal.
+if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+    & nvidia-smi -L *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "NVIDIA GPU detected. Installing CUDA 12 runtime libraries for Whisper..."
+        & $VenvPython -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not install the CUDA libraries. Whisper will run on CPU (set device = ""cpu"" in config.toml to silence the fallback)."
+        }
+    }
+} else {
+    Write-Host "No NVIDIA GPU detected (nvidia-smi not found). Whisper will run on CPU."
+}
+
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     Write-Warning "Ollama is not installed. Install it from https://ollama.com/download/windows, then run: ollama pull gemma4:e4b"
 } else {

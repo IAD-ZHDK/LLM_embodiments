@@ -11,7 +11,7 @@
 #include <ArduinoJson.h>
 #include "esp_timer.h"
 
-#include "../DeviceConfig.h"
+#include "DeviceConfig.h"
 #include "../DevicePersona.h"
 #include "DeviceTools.h"
 

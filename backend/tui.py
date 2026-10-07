@@ -58,6 +58,17 @@ class SelectableRichLog(RichLog):
         self.refresh()
 
 
+class CameraImage(TextualImage, Renderable=TextualImage._Renderable):
+    """Image widget whose recompose runs inside the app context (missing on some Windows setups)."""
+
+    async def _check_recompose(self) -> None:
+        app = _app
+        if app is None:
+            return
+        with app._context():
+            await super()._check_recompose()
+
+
 class DeviceCheckbox(Checkbox):
     @property
     def _button(self) -> Content:
@@ -599,7 +610,7 @@ class TerminalUI(App):
                     Static("", id=f"now-{session_id}", classes="device-now-playing"),
                     Static("Latest photo", classes="pane-heading"),
                     Static("No photo captured yet", id=f"camera-status-{session_id}", classes="device-now-playing"),
-                    TextualImage(id=f"camera-image-{session_id}", classes="camera-preview"),
+                    CameraImage(id=f"camera-image-{session_id}", classes="camera-preview"),
                     id=f"scroll-{session_id}",
                     classes="device-sidebar",
                 ),
@@ -719,7 +730,7 @@ class TerminalUI(App):
             image_bytes = base64.b64decode(image_base64, validate=True)
             with PillowImage.open(BytesIO(image_bytes)) as image_file:
                 image = image_file.convert("RGB")
-            self.query_one(f"#camera-image-{session_id}", TextualImage).image = image
+            self.query_one(f"#camera-image-{session_id}", CameraImage).image = image
             self.query_one(f"#camera-status-{session_id}", Static).update("Photo captured")
         except Exception as exc:
             try:
