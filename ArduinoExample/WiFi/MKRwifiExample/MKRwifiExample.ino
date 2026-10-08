@@ -1,27 +1,35 @@
-// M5Stack CoreS3 (ESP32-S3) example: streams built-in mic audio to the Python backend over WiFi,
-// sends sensor/button notifications, and receives tool calls to drive attached actuators.
-// The built-in camera tool requires M5Stack Board Manager 3.2.2+ and M5Unified 0.2.11+.
-// Companion to ArduinoExample/Serial and ArduinoExample/BLE, using a WiFi WebSocket instead.
-// Requires Library Manager installs: "M5Unified", "WebSockets" (Markus Sattler/Links2004), "ArduinoJson".
+// Arduino MKR WiFi 1010 example: connects to the Python backend over a WiFi WebSocket, reports a
+// button as a notification and lets the model drive the on-board LED.
+// The MKR has no mic or speaker, so voice runs on the backend machine (see README.md in this folder).
+// Requires Library Manager installs: "WiFiNINA", "WebSockets" (Markus Sattler/Links2004), "ArduinoJson".
 //
-// All WiFi/WebSocket/audio plumbing lives in BackendComm.h - this file only needs to:
-//   1. Edit DevicePersona.h to set the model's personality (sent to the backend as the system prompt).
-//   2. Write a small handler function for each action, like set_vibration() below.
-//   3. Add one line per tool to the deviceTools[] table (name, description, dataType, commType, handler,
-//      and optional responseType),
-//      mirroring the Command table in ArduinoExample/Serial - descriptions follow the same
-//      MCP-style name/description/dataType shape used by config.toml's functions.tools.
-//   4. Write your own notification checks, like checkShake() below, and call them from loop().
-//      Use BackendComm::sendNotification(name, value) to report a sensor/button event to the model.
-#include "src/BackendComm.h"
-#include "esp_camera.h"
+// Same structure as the M5Stack example:
+//   1. Copy WifiSecrets.example.h to WifiSecrets.h and enter your WiFi and the backend's IP address.
+//   2. Edit DevicePersona.h to set the model's personality.
+//   3. Write a handler per action and list it in deviceTools[].
+//   4. Report sensor events with BackendComm::sendNotification(name, value).
 
-// --- Device state ---
-bool soundOn = false;
-String soundSequence = "1000:500"; // comma-separated "frequency:durationMs" segments
-String storedString = "hello from the M5Stack";
+#include "wiring_private.h"
+#include "src/BackendComm.h"
+
+#define rxPin 1
+#define txPin 0
+Uart mySerial(&sercom3, rxPin, txPin, SERCOM_RX_PAD_1, UART_TX_PAD_0); // Create the new UART instance
+
+void SERCOM3_Handler()
+{
+    mySerial.IrqHandler();
+}
+
+
+const int kButtonPin = 2; // button between pin 2 and GND
+String storedString = "hello from the MKR";
 
 // --- Tool handlers: called when the model asks this device to do something ---
+void set_led(const String &value)
+{
+    digitalWrite(LED_BUILTIN, (value == "true" || value == "1" || value == "on") ? HIGH : LOW);
+}
 
 void get_String(const String &value)
 {
@@ -33,79 +41,46 @@ void set_String(const String &value)
     storedString = value;
 }
 
-
-
-// --- Tools available to the model (MCP-style: name, description, dataType, handler) ---
+// --- Tools available to the model (MCP-style: name, description, dataType, commType, handler, responseType) ---
 DeviceTool deviceTools[] = {
-    {"set_sound", "Plays a tone or a sequence of tones. Value is comma-separated \"frequency:durationMs\" segments in Hz:milliseconds, e.g. \"880:200,:100,660:200\"; leave frequency blank for a silent pause.", "string", "write", set_sound, ""},
+    {"set_led", "Turns the on-board LED on or off. Value is true or false.", "bool", "write", set_led, ""},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String, ""},
-    {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle, ""},
-    {"MotorPosition", "Capture a photo with the built-in CoreS3 camera and inspect it to answer visual questions.", "none", "read", take_picture, "image/rgb565"},
+    {"get_String", "Reads back the note saved in the device's memory slot.", "none", "read", get_String, ""},
 };
 const size_t deviceToolCount = sizeof(deviceTools) / sizeof(deviceTools[0]);
 
-// --- Notification checks: things this device reports to the model on its own, without being asked.
-//     Add your own here (e.g. a button press or another sensor threshold) and call it from loop(). ---
-void checkShake()
+// --- Notification checks: events this device reports to the model on its own ---
+void checkButton()
 {
-
-    if (!BackendComm::serverConnected)
-        return;
-
-    // update() actually polls the sensor over I2C; getImuData() only returns the last stored
-    // reading, so without this the values never change after the first successful read.
-    M5.Imu.update();
-    auto imu = M5.Imu.getImuData();
-
-    static unsigned long lastDebugMillis = 0;
-    unsigned long now = millis();
-    if (now - lastDebugMillis >= 500) // throttled so it's readable, not flooding the console
+    static bool wasPressed = false;
+    static unsigned long lastChange = 0;
+    bool pressed = digitalRead(kButtonPin) == LOW;
+    if (pressed != wasPressed && millis() - lastChange > 50) // 50 ms debounce
     {
-        // Serial.printf("[IMU] accel x=%.3f y=%.3f z=%.3f\n", imu.accel.x, imu.accel.y, imu.accel.z);
-        lastDebugMillis = now;
-    }
-
-    static unsigned long lastShakeMillis = 0;
-
-    bool shaking = imu.accel.x > 2.0f || imu.accel.y > 2.0f || imu.accel.z > 2.0f;
-
-    if (shaking && now - lastShakeMillis >= 2000) // only allow notifications at most every 2 seconds
-    {
-        Serial.printf("[IMU] Shake");
-        BackendComm::sendNotification("shake", "true");
-        lastShakeMillis = now;
+        wasPressed = pressed;
+        lastChange = millis();
+        if (pressed)
+            BackendComm::sendNotification("button", "pressed");
     }
 }
 
 void setup()
 {
-    BackendComm::begin();
+    // for motor
+    pinPeripheral(rxPin, PIO_SERCOM); // Assign RX function
+    pinPeripheral(txPin, PIO_SERCOM); // Assign TX function
+    mySerial.begin(115200);
+    mySerial.print("#0D1500\r");                                  // this is used to clear the serial buffer
+    mySerial.print(String("#") + 254 + String("LED") + 2 + "\r"); // set LED
 
-    BackendComm::playTone(2000, 100);
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(kButtonPin, INPUT_PULLUP);
+    BackendComm::begin();
 }
 
 void loop()
 {
     BackendComm::loop();
-    checkShake();
-
-    if (soundOn)
-    {
-        BackendComm::playToneSequence(soundSequence);
-        soundOn = false;
-    }
-
-    if (yellowCircleUntil && !yellowCircleShown)
-    {
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.fillCircle(M5.Lcd.width() / 2, M5.Lcd.height() / 2, min(M5.Lcd.width(), M5.Lcd.height()) / 3, YELLOW);
-        yellowCircleShown = true;
-    }
-    else if (yellowCircleUntil && millis() >= yellowCircleUntil)
-    {
-        yellowCircleUntil = 0;
-        yellowCircleShown = false;
-        redrawDisplay();
-        drawMicLevelBar();
-    }
+    if (BackendComm::serverConnected)
+        checkButton();
 }
