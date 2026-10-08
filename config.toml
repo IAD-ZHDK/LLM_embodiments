@@ -70,7 +70,7 @@ provider = "ollama"  # "ollama" for local model on this device, "openai" for clo
 temperature = 0.9  # Number between -2.0 and 2.0. Positive value decreases the model's likelihood to repeat the same line verbatim.
 frequency_penalty = 0.9  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to talk about new topics.
 presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase the model's likelihood to generate words and phrases present in the input prompt.
-model = "lfm2.5:8b"  # default Ollama model; change to another supported model as needed
+model = "gemma4:e4b"  # default Ollama model; change to another supported model as needed
 # Allow deviceInfo to override the configured model until a model is chosen in the TUI.
 allowDeviceModelOverride = false
 max_tokens = 8192  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
