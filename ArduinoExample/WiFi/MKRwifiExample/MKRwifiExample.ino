@@ -21,7 +21,6 @@ void SERCOM3_Handler()
     mySerial.IrqHandler();
 }
 
-
 const int kButtonPin = 2; // button between pin 2 and GND
 String storedString = "hello from the MKR";
 
@@ -41,11 +40,28 @@ void set_String(const String &value)
     storedString = value;
 }
 
+void set_Motor_Position(const String &value)
+{
+    float position = value.toFloat();
+    int positionInt = static_cast<int>(position * 10); // convert to integer with 1/10 degree precision
+    // Send the position command to the motor via serial
+    mySerial.print(String("#") + 254 + String("POS") + position + "\r");
+}
+
+void set_Motor2_RPM(const String &value)
+{
+    int rpm = value.toInt();
+    // Send the RPM command to the motor via serial
+    mySerial.print(String("#") + 2 + String("WR") + rpm + "\r"); // RPM move
+}
+
 // --- Tools available to the model (MCP-style: name, description, dataType, commType, handler, responseType) ---
 DeviceTool deviceTools[] = {
     {"set_led", "Turns the on-board LED on or off. Value is true or false.", "bool", "write", set_led, ""},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String, ""},
     {"get_String", "Reads back the note saved in the device's memory slot.", "none", "read", get_String, ""},
+    {"set_Motor_Position", "Sets the motor position in degrees. Value is an float representing the desired position with max 1/10 degree acuracy. ", "float", "write", set_Motor_Position, ""},
+    {"set_Motor2_RPM", "Sets the motor 2s RPM. Value is an int representing the desired RPM.", "int", "write", set_Motor2_RPM, ""},
 };
 const size_t deviceToolCount = sizeof(deviceTools) / sizeof(deviceTools[0]);
 

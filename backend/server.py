@@ -26,7 +26,7 @@ try:
     from .model_downloader import download_piper_voice
     from .serial_comm import SerialCommunication
     from .speech_workers import SpeechToTextWorker, TextToSpeechWorker
-    from . import tui
+    from . import tui, web_view
 except ImportError:
     from config_loader import load_config
     from dataset_logger import new_dataset_path, save_conversation
@@ -37,6 +37,7 @@ except ImportError:
     from serial_comm import SerialCommunication
     from speech_workers import SpeechToTextWorker, TextToSpeechWorker
     import tui
+    import web_view
 
 BACKEND_PORT = 3000
 MAX_SESSIONS_HARD_CAP = 10
@@ -139,6 +140,7 @@ def _request_shutdown() -> None:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 app = FastAPI(title="LLM Embodiments Python Backend")
+web_view.mount(app)
 
 
 class BackendState:

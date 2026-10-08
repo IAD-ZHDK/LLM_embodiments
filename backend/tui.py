@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from io import BytesIO
 import re
@@ -20,6 +21,11 @@ from textual.strip import Strip
 from textual.widgets import Checkbox, DataTable, Footer, Header, Input, RichLog, Select, Static, TabbedContent, TabPane
 from PIL import Image as PillowImage
 from textual_image.widget import Image as TextualImage
+
+try:
+    from . import web_view
+except ImportError:
+    import web_view
 
 
 class SelectableRichLog(RichLog):
@@ -222,6 +228,7 @@ class TerminalUI(App):
                     with Vertical(id="overview-right"):
                         with Horizontal(id="toolbar"):
                             yield Static("", id="banner")
+                        yield DeviceCheckbox("Open web viewer in a new window", id="web-viewer-toggle")
                         with Vertical(id="model-controls"):
                             for label, model, options, control_id in (
                                 ("LLM model", self.model_name, [self.model_name] if self.model_name else [], "model-select"),
@@ -341,9 +348,31 @@ class TerminalUI(App):
             self._updating_model_options = False
             return
         setattr(self, attribute, model)
+        web_view.set_model(attribute.split('_')[0] if attribute != 'model_name' else 'llm', model)
         if summary:
             self.update_model_summary(summary)
         self.log_line(f"{attribute.replace('_', ' ').upper()} changed to {model}")
+
+    def sync_model_from_web(self, key: str, model: str) -> None:
+        if threading.get_ident() != self._main_thread_id:
+            self.call_from_thread(self.sync_model_from_web, key, model)
+            return
+        attribute, selector_id = {
+            "llm": ("model_name", "model-select"),
+            "stt": ("stt_model", "stt-model-select"),
+            "tts": ("tts_model", "tts-model-select"),
+        }[key]
+        setattr(self, attribute, model)
+        self._updating_model_options = True
+        try:
+            selector = self.query_one(f"#{selector_id}", Select)
+            options = web_view.model_options(key)
+            selector.set_options((m, m) for m in options)
+            selector.value = model
+        except Exception:
+            pass
+        finally:
+            self._updating_model_options = False
 
     def _tab_id(self, session_id: str) -> str:
         return f"tab-{session_id}"
@@ -423,6 +452,11 @@ class TerminalUI(App):
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         checkbox_id = event.checkbox.id or ""
         selected = bool(event.value)
+        if checkbox_id == "web-viewer-toggle":
+            if selected:
+                web_view.open_window()
+                self.log_line(f"Web viewer: {web_view.url()}")
+            return
         if checkbox_id.startswith("audio-in-local-"):
             session_id = checkbox_id[len("audio-in-local-"):]
             self._audio_input_local[session_id] = selected
@@ -805,6 +839,7 @@ def get_app() -> Optional[TerminalUI]:
 
 
 def set_model_summary(summary: str) -> None:
+    web_view.set_summary(summary)
     global _model_summary
     _model_summary = summary
     if _app is not None:
@@ -812,76 +847,91 @@ def set_model_summary(summary: str) -> None:
 
 
 def update_session(session_id: str, **kwargs) -> None:
+    web_view.update_session(session_id, kwargs.get('kind'), kwargs.get('status'))
     if _app is not None:
         _app.update_session(session_id, **kwargs)
 
 
 def update_audio_mutes(session_id: str, mic_muted: bool, speaker_muted: bool) -> None:
+    web_view.set_mutes(session_id, mic_muted, speaker_muted)
     if _app is not None:
         _app.update_audio_mutes(session_id, mic_muted, speaker_muted)
 
 
 def remove_session(session_id: str) -> None:
+    web_view.remove_session(session_id)
     if _app is not None:
         _app.remove_session(session_id)
 
 
 def add_device_tab(session_id: str, kind: str = "Device") -> None:
+    web_view.add_device(session_id, kind)
     if _app is not None:
         _app.add_device_tab(session_id, kind)
 
 
 def update_device_name(session_id: str, name: str) -> None:
+    web_view.set_field(session_id, 'name', name)
     if _app is not None:
         _app.update_device_name(session_id, name)
 
 
 def remove_device_tab(session_id: str) -> None:
+    web_view.remove_device(session_id)
     if _app is not None:
         _app.remove_device_tab(session_id)
 
 
 def clear_devices() -> None:
+    web_view.clear_devices()
     if _app is not None:
         _app.clear_devices()
 
 
 def log_device(session_id: str, text: str) -> None:
+    web_view.device_log(session_id, text)
     if _app is not None:
         _app.log_device(session_id, text)
 
 
 def update_tools(session_id: str, tools: list) -> None:
+    web_view.set_field(session_id, 'tools', tools)
     if _app is not None:
         _app.update_tools(session_id, tools)
 
 
 def update_stt(session_id: str, text: str) -> None:
+    web_view.set_field(session_id, 'stt', text)
     if _app is not None:
         _app.update_stt(session_id, text)
 
 
 def update_prompt(session_id: str, text: str) -> None:
+    web_view.set_field(session_id, 'prompt', text)
     if _app is not None:
         _app.update_prompt(session_id, text)
 
 
 def update_response(session_id: str, text: str) -> None:
+    web_view.set_field(session_id, 'response', text)
     if _app is not None:
         _app.update_response(session_id, text)
 
 
 def update_camera_image(session_id: str, image_base64: str) -> None:
+    web_view.set_field(session_id, 'image', image_base64)
     if _app is not None:
         _app.update_camera_image(session_id, image_base64)
 
 
 def update_thinking(session_id: str, text: str) -> None:
+    web_view.thinking(session_id, text)
     if _app is not None:
         _app.update_thinking(session_id, text)
 
 
 def reset_thinking(session_id: str) -> None:
+    web_view.reset_thinking(session_id)
     if _app is not None:
         _app.reset_thinking(session_id)
 
@@ -893,6 +943,7 @@ def _tui_print(*args, **kwargs) -> None:
     if _app is not None:
         sep = kwargs.get("sep", " ")
         text = sep.join(str(a) for a in args)
+        web_view.console(text)
         _app.log_line(text)
     else:
         _original_print(*args, **kwargs)
@@ -952,6 +1003,25 @@ async def start(
         on_change_stt_model=on_change_stt_model,
         on_change_tts_model=on_change_tts_model,
         on_add_tts_model=on_add_tts_model,
+    )
+    web_view.configure(
+        asyncio.get_running_loop(),
+        _app.host,
+        port,
+        {
+            "prompt": on_prompt,
+            "mic": on_toggle_mic,
+            "speaker": on_toggle_tts,
+            "route": on_toggle_audio_route,
+            "list_llm": on_list_models,
+            "list_stt": on_list_stt_models,
+            "list_tts": on_list_tts_models,
+            "change_llm": on_change_model,
+            "change_stt": on_change_stt_model,
+            "change_tts": on_change_tts_model,
+            "add_tts": on_add_tts_model,
+        },
+        {"llm": model_name, "stt": stt_model, "tts": tts_model},
     )
     _original_print = builtins.print
     builtins.print = _tui_print
