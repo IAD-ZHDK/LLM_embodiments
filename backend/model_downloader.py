@@ -5,6 +5,51 @@ import zipfile
 import io
 import shutil
 
+PIPER_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/"
+
+# Ordered presets selectable by number (1-based) from device firmware. Append new voices at the
+# end: numbers above the list length fall back to the last entry. (voice stem, repo path)
+PIPER_VOICE_PRESETS = [
+    "en_US-lessac-medium",
+    "en_GB-alan-medium",
+    "en_US-amy-medium",
+    "en_GB-northern_english_male-medium",
+    "en_US-ryan-medium",
+    "en_GB-jenny_dioco-medium",
+]
+
+
+def piper_voice_urls(stem):
+    """Return (model_url, config_url) for a voice stem like en_GB-alan-medium."""
+    lang_region, speaker, quality = stem.split("-", 2)
+    lang = lang_region.split("_")[0]
+    base = f"{PIPER_BASE_URL}{lang}/{lang_region}/{speaker}/{quality}/{stem}.onnx"
+    return base, base + ".json"
+
+
+def piper_voice_for_number(number):
+    """Map a 1-based preset number to a voice filename; out-of-range clamps to the last preset."""
+    index = min(max(int(number), 1), len(PIPER_VOICE_PRESETS)) - 1
+    return PIPER_VOICE_PRESETS[index] + ".onnx"
+
+
+def download_preset_voices(output_dir):
+    """Download any missing preset voices. Returns True if all are present afterwards."""
+    ok = True
+    for stem in PIPER_VOICE_PRESETS:
+        model_path = os.path.join(output_dir, stem + ".onnx")
+        if os.path.exists(model_path) and os.path.exists(model_path + ".json"):
+            continue
+        model_url, config_url = piper_voice_urls(stem)
+        ok = download_piper_voice(stem, output_dir, model_url=model_url, config_url=config_url) and ok
+    return ok
+
+
+if __name__ == "__main__":
+    target = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "TTSmodels")
+    sys.exit(0 if download_preset_voices(target) else 1)
+
+
 def download_and_extract_model(model_name, output_dir, base_url=None):
     """
     Download and extract a model, handling nested directories.

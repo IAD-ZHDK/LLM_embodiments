@@ -8,7 +8,7 @@ import threading
 import queue
 import time  # Add this at the top with other imports
 import os
-from model_downloader import download_piper_voice
+from model_downloader import download_piper_voice, PIPER_VOICE_PRESETS, piper_voice_urls
 
 # Global variables
 CYAN = '\033[96m'
@@ -42,6 +42,10 @@ TTS_MODELS = {
     }
    
 }
+
+for _stem in PIPER_VOICE_PRESETS:
+    _model_url, _config_url = piper_voice_urls(_stem)
+    TTS_MODELS.setdefault(_stem + ".onnx", {"model": _model_url, "config": _config_url})
 
 MODEL_NAMES = list(TTS_MODELS.keys())
 stop_event = threading.Event()

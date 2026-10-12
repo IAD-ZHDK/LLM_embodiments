@@ -23,7 +23,7 @@ try:
     from .device_ws_comm import DeviceWebSocketCommunication
     from .function_handler import FunctionHandler
     from .llm_api import LLMAPI
-    from .model_downloader import download_piper_voice
+    from .model_downloader import download_piper_voice, piper_voice_for_number
     from .serial_comm import SerialCommunication
     from .speech_workers import SpeechToTextWorker, TextToSpeechWorker
     from . import tui, web_view
@@ -33,7 +33,7 @@ except ImportError:
     from device_ws_comm import DeviceWebSocketCommunication
     from function_handler import FunctionHandler
     from llm_api import LLMAPI
-    from model_downloader import download_piper_voice
+    from model_downloader import download_piper_voice, piper_voice_for_number
     from serial_comm import SerialCommunication
     from speech_workers import SpeechToTextWorker, TextToSpeechWorker
     import tui
@@ -65,6 +65,7 @@ class DeviceSession:
             on_thinking=self._on_llm_thinking,
         )
         self.stt: Optional[SpeechToTextWorker] = None
+        self.tts_model = ""
         self.device_name = ""
         self.dataset_path: Optional[Path] = None
         self.audio_mic_muted = False
@@ -557,7 +558,7 @@ async def _emit_assistant(
         session.local_tts_text = message
         state.tts.say(
             message,
-            settings["textToSpeechModel"],
+            session.tts_model or settings["textToSpeechModel"],
             int(state.volume),
             request_id=session.session_id,
         )
@@ -574,7 +575,7 @@ async def _emit_assistant(
             session.stt.pause()
         state.tts.say(
             message,
-            settings["textToSpeechModel"],
+            session.tts_model or settings["textToSpeechModel"],
             int(state.volume),
             output="device",
             request_id=session.session_id,
@@ -986,6 +987,14 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
                     + "\n".join(instructions)
                 )
                 print(f"🔔 [{session.session_id}] Device notification guidance installed ({len(instructions)} rule(s))")
+
+    speech = device_info.get("speech")
+    if isinstance(speech, dict):
+        try:
+            session.tts_model = piper_voice_for_number(int(speech["voice"]))
+            print(f"🔊 [{session.session_id}] Device TTS voice: {session.tts_model}")
+        except (KeyError, TypeError, ValueError):
+            pass
 
     generation = device_info.get("generation")
     if isinstance(generation, dict):

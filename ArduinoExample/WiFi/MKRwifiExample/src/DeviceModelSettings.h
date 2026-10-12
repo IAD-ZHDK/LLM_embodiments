@@ -8,4 +8,5 @@ struct PersonaGenerationSettings
     int topK;
     int maxTokens;
     float repeatPenalty;
+    int voice;
 };

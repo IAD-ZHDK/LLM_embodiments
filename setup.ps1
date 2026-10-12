@@ -41,6 +41,12 @@ Write-Host "Installing Python dependencies..."
 & $VenvPython -m pip install --upgrade pip wheel setuptools
 & $VenvPython -m pip install -r "backend\requirements.txt"
 
+Write-Host "Downloading Piper voices (selectable 1-6 from device firmware)..."
+& $VenvPython "backend\model_downloader.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Some Piper voices could not be downloaded. Missing voices are fetched on first use."
+}
+
 # Optional GPU acceleration for Whisper: faster-whisper needs the CUDA 12 cuBLAS/cuDNN runtime DLLs.
 # Without them the backend falls back to CPU automatically, so failures here are non-fatal.
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {

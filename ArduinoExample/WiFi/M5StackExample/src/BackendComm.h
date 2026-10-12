@@ -13,6 +13,7 @@
 
 #include "DeviceConfig.h"
 #include "../DevicePersona.h"
+#include "PersonaEditor.h"
 #include "DeviceTools.h"
 
 namespace BackendComm
@@ -364,21 +365,23 @@ namespace BackendComm
     inline void _sendDeviceInfo()
     {
         JsonDocument doc;
-        doc["deviceInfo"]["deviceName"] = kDeviceName;
-        doc["deviceInfo"]["persona"] = kSystemPrompt;
+        const PersonaEditor::Runtime &p = PersonaEditor::persona;
+        doc["deviceInfo"]["deviceName"] = p.deviceName;
+        doc["deviceInfo"]["persona"] = p.systemPrompt;
         JsonObject generation = doc["deviceInfo"]["generation"].to<JsonObject>();
-        generation["model"] = kGenerationSettings.model;
-        generation["temperature"] = kGenerationSettings.temperature;
-        generation["top_p"] = kGenerationSettings.topP;
-        generation["top_k"] = kGenerationSettings.topK;
-        generation["max_tokens"] = kGenerationSettings.maxTokens;
-        generation["repeat_penalty"] = kGenerationSettings.repeatPenalty;
+        generation["model"] = p.model;
+        generation["temperature"] = p.temperature;
+        generation["top_p"] = p.topP;
+        generation["top_k"] = p.topK;
+        generation["max_tokens"] = p.maxTokens;
+        generation["repeat_penalty"] = p.repeatPenalty;
+        doc["deviceInfo"]["speech"]["voice"] = p.voice;
         JsonArray notifications = doc["deviceInfo"]["notificationGuidance"].to<JsonArray>();
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
         {
             JsonObject notification = notifications.add<JsonObject>();
             notification["name"] = kNotificationGuidance[i].name;
-            notification["instruction"] = kNotificationGuidance[i].instruction;
+            notification["instruction"] = p.notifications[i];
         }
         JsonArray tools = doc["deviceInfo"]["tools"].to<JsonArray>();
         for (size_t i = 0; i < deviceToolCount; i++)
@@ -593,6 +596,7 @@ namespace BackendComm
                 displayState.wifiStatus = "WiFi: " + wifiSsid;
                 displayState.wifiIP = "IP: " + WiFi.localIP().toString();
                 _startMDNS();
+                PersonaEditor::startServer();
 
                 Serial.printf("\n[WiFi] Connected after %lums.\n", millis() - startedAt);
                 Serial.printf("[WiFi] IP: %s, gateway: %s, RSSI: %d dBm.\n",
@@ -712,6 +716,7 @@ namespace BackendComm
                       imuFound ? "OK" : "FAILED", static_cast<int>(M5.Imu.getType()));
 
         _loadBootstrapConfig();
+        PersonaEditor::load();
         displayState.wsTarget = "Target: " + backendHost + ":" + String(backendPort) + backendPath;
         Serial.printf("[Config] Target backend: ws://%s:%u%s\n", backendHost.c_str(), backendPort, backendPath.c_str());
         _connectWifi();
@@ -752,6 +757,13 @@ namespace BackendComm
 
         _startWebSocket();
         _startAnalogMic();
+        PersonaEditor::handleClient();
+        if (PersonaEditor::changed)
+        {
+            // Dropping the connection makes the WebSocket client reconnect and re-send deviceInfo.
+            PersonaEditor::changed = false;
+            webSocket.disconnect();
+        }
         webSocket.loop();
         _streamMicAudio();
     }

@@ -232,6 +232,9 @@ setup_python_venv() {
     echo "WARNING: onnxruntime could not be imported. Attempting direct installation..."
     python -m pip install --no-cache-dir -v onnxruntime
   fi
+
+  echo "Downloading Piper voices (selectable 1-6 from device firmware)..."
+  python backend/model_downloader.py || echo "Some Piper voices could not be downloaded; missing voices are fetched on first use."
 }
 
 create_helper_scripts() {

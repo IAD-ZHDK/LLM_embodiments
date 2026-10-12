@@ -38,6 +38,7 @@ namespace BackendProtocol
         generation["top_k"] = kGenerationSettings.topK;
         generation["max_tokens"] = kGenerationSettings.maxTokens;
         generation["repeat_penalty"] = kGenerationSettings.repeatPenalty;
+        info["speech"]["voice"] = kGenerationSettings.voice;
         JsonArray notifications = info["notificationGuidance"].to<JsonArray>();
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
         {
