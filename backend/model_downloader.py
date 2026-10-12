@@ -45,11 +45,6 @@ def download_preset_voices(output_dir):
     return ok
 
 
-if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "TTSmodels")
-    sys.exit(0 if download_preset_voices(target) else 1)
-
-
 def download_and_extract_model(model_name, output_dir, base_url=None):
     """
     Download and extract a model, handling nested directories.
@@ -237,6 +232,11 @@ def check_model_exists(model_name, model_dir):
 # Command-line interface for testing
 if __name__ == "__main__":
     import argparse
+
+    # No arguments: download the Piper voice presets into backend/TTSmodels.
+    if len(sys.argv) == 1:
+        default_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TTSmodels")
+        sys.exit(0 if download_preset_voices(default_dir) else 1)
     
     parser = argparse.ArgumentParser(description="Download and extract AI models")
     parser.add_argument("model_name", help="Name of the model to download")
