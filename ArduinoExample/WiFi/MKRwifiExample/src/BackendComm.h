@@ -89,6 +89,15 @@ namespace BackendComm
         Serial.begin(115200);
         if (WiFi.status() == WL_NO_MODULE)
             Serial.println("[WiFi] Communication with the WiFi module failed!");
+
+        Serial.println(WiFi.firmwareVersion());
+        int n = WiFi.scanNetworks();
+        for (int i = 0; i < n; i++)
+        {
+            Serial.print(WiFi.SSID(i));
+            Serial.print(" RSSI ");
+            Serial.println(WiFi.RSSI(i));
+        }
     }
 
     inline void loop()

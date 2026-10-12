@@ -2,6 +2,8 @@
 
 A voice-controlled LLM system for prototyping physical "Large Language Objects" with devices connected over Serial, BLE, or WiFi.
 
+![System overview](docs/system-overview.svg)
+
 ## Install
 
 Clone the repository:

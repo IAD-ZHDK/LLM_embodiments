@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" font-family="Helvetica, Arial, sans-serif" fill="#fff">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fff"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="640" fill="#000"/>
+
+  <!-- Device container -->
+  <rect x="40" y="50" width="380" height="540" rx="14" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="64" y="86" font-size="15" letter-spacing="3" font-weight="700">DEVICE</text>
+
+  <!-- Motor -->
+  <rect x="110" y="120" width="240" height="64" rx="10" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="230" y="159" font-size="20" text-anchor="middle">Motor</text>
+  <line x1="230" y1="260" x2="230" y2="184" stroke="#fff" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Microcontroller -->
+  <rect x="140" y="260" width="180" height="100" rx="10" fill="none" stroke="#fff" stroke-width="3"/>
+  <text x="230" y="316" font-size="20" font-weight="700" text-anchor="middle">Microcontroller</text>
+
+  <!-- Placeholders -->
+  <rect x="64" y="450" width="160" height="70" rx="10" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="144" y="480" font-size="17" text-anchor="middle">Sensor</text>
+  <text x="144" y="502" font-size="13" text-anchor="middle" fill="#aaa">placeholder</text>
+  <rect x="236" y="450" width="160" height="70" rx="10" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="316" y="480" font-size="17" text-anchor="middle">Peripheral</text>
+  <text x="316" y="502" font-size="13" text-anchor="middle" fill="#aaa">placeholder</text>
+  <line x1="190" y1="360" x2="144" y2="450" stroke="#fff" stroke-width="2" stroke-dasharray="7 6"/>
+  <line x1="270" y1="360" x2="316" y2="450" stroke="#fff" stroke-width="2" stroke-dasharray="7 6"/>
+
+  <!-- Backend container -->
+  <rect x="780" y="50" width="380" height="540" rx="14" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="804" y="86" font-size="15" letter-spacing="3" font-weight="700">BACKEND</text>
+
+  <rect x="840" y="120" width="260" height="80" rx="10" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="970" y="168" font-size="22" font-weight="700" text-anchor="middle">STT</text>
+
+  <rect x="840" y="260" width="260" height="100" rx="10" fill="none" stroke="#fff" stroke-width="3"/>
+  <text x="970" y="318" font-size="22" font-weight="700" text-anchor="middle">Local Model</text>
+
+  <rect x="840" y="430" width="260" height="80" rx="10" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="970" y="478" font-size="22" font-weight="700" text-anchor="middle">TTS</text>
+
+  <line x1="970" y1="200" x2="970" y2="260" stroke="#fff" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="970" y1="360" x2="970" y2="430" stroke="#fff" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Connections -->
+  <!-- mic input: MCU -> STT -->
+  <path d="M320,278 H600 V160 H840" fill="none" stroke="#fff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="460" y="268" font-size="16" text-anchor="middle">mic input</text>
+
+  <!-- function calling: both directions -->
+  <line x1="320" y1="310" x2="840" y2="310" stroke="#fff" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="720" y="300" font-size="16" text-anchor="middle">function calling</text>
+
+  <!-- sound out: TTS -> MCU -->
+  <path d="M840,470 H600 V342 H320" fill="none" stroke="#fff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="460" y="364" font-size="16" text-anchor="middle">sound out</text>
+</svg>

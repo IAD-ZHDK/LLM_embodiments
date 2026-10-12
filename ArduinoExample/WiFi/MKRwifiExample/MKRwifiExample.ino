@@ -45,7 +45,8 @@ void set_Motor_Position(const String &value)
     float position = value.toFloat();
     int positionInt = static_cast<int>(position * 10); // convert to integer with 1/10 degree precision
     // Send the position command to the motor via serial
-    mySerial.print(String("#") + 254 + String("POS") + position + "\r");
+    Serial.println(positionInt);
+    mySerial.print(String("#") + 254 + String("D") + positionInt + "\r");
 }
 
 void set_Motor2_RPM(const String &value)
@@ -87,7 +88,7 @@ void setup()
     pinPeripheral(txPin, PIO_SERCOM); // Assign TX function
     mySerial.begin(115200);
     mySerial.print("#0D1500\r");                                  // this is used to clear the serial buffer
-    mySerial.print(String("#") + 254 + String("LED") + 2 + "\r"); // set LED
+    mySerial.print(String("#") + 254 + String("LED") + 3 + "\r"); // set LED
 
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(kButtonPin, INPUT_PULLUP);

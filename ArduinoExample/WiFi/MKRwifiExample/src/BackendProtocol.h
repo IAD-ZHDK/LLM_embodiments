@@ -29,6 +29,8 @@ namespace BackendProtocol
         JsonObject info = doc["deviceInfo"].to<JsonObject>();
         info["deviceName"] = kDeviceName;
         info["persona"] = kSystemPrompt;
+        info["hasAudio"] = false;   // backend uses its own mic/speaker, nothing is streamed to this board
+        info["hasDisplay"] = false; // no assistant text is sent either (saves RAM)
         JsonObject generation = info["generation"].to<JsonObject>();
         generation["model"] = kGenerationSettings.model;
         generation["temperature"] = kGenerationSettings.temperature;
@@ -69,8 +71,11 @@ namespace BackendProtocol
     // everything else (audio, config, display text) is ignored. Returns true if a tool ran.
     inline bool handleMessage(const uint8_t *payload, size_t length)
     {
+        // Only keep toolCall so any other (possibly long) message is never copied into RAM.
+        JsonDocument filter;
+        filter["toolCall"] = true;
         JsonDocument doc;
-        if (deserializeJson(doc, payload, length) != DeserializationError::Ok)
+        if (deserializeJson(doc, payload, length, DeserializationOption::Filter(filter)) != DeserializationError::Ok)
             return false;
         if (!doc["toolCall"].is<JsonObject>())
             return false;

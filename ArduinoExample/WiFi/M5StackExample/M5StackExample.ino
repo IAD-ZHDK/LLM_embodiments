@@ -16,6 +16,11 @@
 #include "src/BackendComm.h"
 #include "esp_camera.h"
 
+// --- Servo motor on Port A (UART1) ---
+#define rxPin 2
+#define txPin 1
+HardwareSerial mySerial(1);
+
 // --- Device state ---
 bool soundOn = false;
 String soundSequence = "1000:500"; // comma-separated "frequency:durationMs" segments
@@ -68,6 +73,17 @@ void get_String(const String &value)
 void set_String(const String &value)
 {
     storedString = value;
+}
+
+void set_Motor_Position(const String &value)
+{
+    int positionInt = static_cast<int>(value.toFloat() * 10); // 1/10 degree units
+    mySerial.print(String("#") + 254 + String("D") + positionInt + "\r");
+}
+
+void set_Motor2_RPM(const String &value)
+{
+    mySerial.print(String("#") + 2 + String("WR") + value.toInt() + "\r"); // RPM move
 }
 
 void show_yellow_circle(const String &value)
@@ -137,6 +153,8 @@ void take_picture(const String &value)
 DeviceTool deviceTools[] = {
     {"set_sound", "Plays a tone or a sequence of tones. Value is comma-separated \"frequency:durationMs\" segments in Hz:milliseconds, e.g. \"880:200,:100,660:200\"; leave frequency blank for a silent pause.", "string", "write", set_sound, ""},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String, ""},
+    {"set_Motor_Position", "Sets the motor position in degrees. Value is a float representing the desired position with max 1/10 degree accuracy.", "float", "write", set_Motor_Position, ""},
+    {"set_Motor2_RPM", "Sets the motor 2's RPM. Value is an int representing the desired RPM.", "int", "write", set_Motor2_RPM, ""},
     {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle, ""},
     {"take_picture", "Capture a photo with the built-in CoreS3 camera and inspect it to answer visual questions.", "none", "read", take_picture, "image/rgb565"},
 };
@@ -178,6 +196,10 @@ void checkShake()
 void setup()
 {
     BackendComm::begin();
+
+    mySerial.begin(115200, SERIAL_8N1, rxPin, txPin);
+    mySerial.print("#0D1500\r");   // clears the servo serial buffer
+    mySerial.print("#254LED3\r"); // set servo LED
 
     BackendComm::playTone(2000, 100);
 }

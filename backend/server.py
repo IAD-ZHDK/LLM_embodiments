@@ -74,6 +74,8 @@ class DeviceSession:
         self.stt_activity_started_at = 0.0
         self.audio_input_local = kind != "WiFi"
         self.audio_output_local = kind != "WiFi"
+        self.has_audio = True
+        self.has_display = True
         # Per session, so one device's turns stay ordered without blocking the other devices.
         self.lock = asyncio.Lock()
 
@@ -546,7 +548,7 @@ async def _emit_assistant(
     elapsed = f" ({processing_ms / 1000:.2f}s)" if processing_ms is not None else ""
     tui.log_device(session.session_id, f"🤖 LLM total{elapsed}: {message}")
     await _update_frontend(message, "assistant")
-    if state.comm_method == "WiFi" and state.config.get("deviceResponseDisplay", True):
+    if state.comm_method == "WiFi" and session.has_display and state.config.get("deviceResponseDisplay", True):
         send_response = getattr(session.comm, "send_response", None)
         if send_response:
             send_response(message)
@@ -930,6 +932,14 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
         session.device_name = device_name.strip()
         tui.update_device_name(session.session_id, session.device_name)
         print(f"🏷️  [{session.session_id}] Device name: {session.device_name}")
+
+    # Boards without mic/speaker/screen (e.g. MKR WiFi 1010) must not receive audio or long text frames.
+    if device_info.get("hasDisplay") is False:
+        session.has_display = False
+    if device_info.get("hasAudio") is False:
+        session.has_audio = False
+        session.audio_speaker_muted = True
+        _set_audio_route(session.session_id, True, True)
 
     persona = device_info.get("persona")
     if isinstance(persona, str) and persona.strip():
