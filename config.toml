@@ -73,6 +73,9 @@ presence_penalty = 0.0  # Number between -2.0 and 2.0. Positive values increase 
 model = "gemma4:e4b"  # default Ollama model; change to another supported model as needed
 # Allow deviceInfo to override the configured model until a model is chosen in the TUI.
 allowDeviceModelOverride = false
+# Conversation memory: keep the system prompt plus the last N user turns (each with its replies and tool calls).
+# Older turns are dropped so long conversations don't overflow the model's context. 0 = unlimited.
+maxHistoryTurns = 30
 max_tokens = 8192  # Number between 1 and 8192. The maximum number of tokens to generate in the completion.
 # Ollama only: reasoning before answering. Restart the backend and reconnect the device after changing it.
 # Options: false (off, fastest) | true (on) | "low" | "medium" | "high" (effort levels).

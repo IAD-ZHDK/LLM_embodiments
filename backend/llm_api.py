@@ -248,9 +248,25 @@ class LLMAPI:
             msg["name"] = function_name
         messages.append(msg)
         self.config.setdefault("conversationProtocol", []).append(msg)
+        self._trim_history()
+        messages = list(self.config["conversationProtocol"])
         if self._is_arch_function_mode():
             messages = self._apply_arch_system_prompt(messages)
         return messages
+
+    def _trim_history(self) -> None:
+        """Keep system messages plus the last `maxHistoryTurns` user turns (0 = unlimited).
+
+        Cuts only at user messages, so a tool call is never separated from its result."""
+        limit = self.config.get("llmSettings", {}).get("maxHistoryTurns", 0)
+        if not isinstance(limit, int) or limit <= 0:
+            return
+        history = self.config.setdefault("conversationProtocol", [])
+        user_indexes = [i for i, m in enumerate(history) if m.get("role") == "user"]
+        if len(user_indexes) <= limit:
+            return
+        cut = user_indexes[-limit]
+        history[:] = [m for i, m in enumerate(history) if i >= cut or m.get("role") == "system"]
 
     def _is_arch_function_mode(self) -> bool:
         settings = self.config.get("llmSettings", {})

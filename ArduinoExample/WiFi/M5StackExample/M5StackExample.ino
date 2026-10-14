@@ -198,7 +198,7 @@ void setup()
     BackendComm::begin();
 
     mySerial.begin(115200, SERIAL_8N1, rxPin, txPin);
-    mySerial.print("#0D1500\r");   // clears the servo serial buffer
+    mySerial.print("#0D1500\r");  // clears the servo serial buffer
     mySerial.print("#254LED3\r"); // set servo LED
 
     BackendComm::playTone(2000, 100);
