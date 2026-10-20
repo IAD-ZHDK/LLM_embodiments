@@ -98,4 +98,24 @@ The default provider and model are `ollama` and `gemma4:e4b`. See
 
 For manual dependency installation, speech-model setup, or OpenAI configuration, see [Manual installation](MANUAL_INSTALL.md).
 
-To update an existing checkout, run `git pull` from the repository folder.
+### Update an existing checkout
+
+For a normal update that preserves local changes, run `git pull` from the repository folder.
+
+To force the local `main` branch to match `origin/main`, use the platform script below. **This discards local changes to tracked files.** Untracked and ignored files (such as `logs/`) are left untouched; the script does not run `git clean`. Back up any work you need first.
+
+macOS or Linux:
+
+```bash
+bash ./updateFromRemote.sh
+```
+
+Add `--force` to skip the confirmation prompt.
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\updateFromRemote.ps1
+```
+
+Add `-Force` to skip the confirmation prompt.

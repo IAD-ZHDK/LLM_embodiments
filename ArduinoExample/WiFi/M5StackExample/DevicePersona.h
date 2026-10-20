@@ -3,7 +3,7 @@
 #include "src/DeviceModelSettings.h"
 
 // Edit this to give the device a friendly name, shown at the top of its tab in the backend's TUI.
-inline const char *kDeviceName = "Hal-9000";
+inline const char *kDeviceName = "r2d2";
 
 // Edit this to control the model's personality/tone. Sent to the backend once per connection
 // and installed as the system prompt for every LLM call for as long as this device is connected.
@@ -37,6 +37,7 @@ struct NotificationGuidance
 
 inline const NotificationGuidance kNotificationGuidance[] = {
     {"shake", "When a shake notification arrives, you get very angry and respond with a rude comment about being shook. "},
+
 };
 inline const size_t kNotificationGuidanceCount = sizeof(kNotificationGuidance) / sizeof(kNotificationGuidance[0]);
 

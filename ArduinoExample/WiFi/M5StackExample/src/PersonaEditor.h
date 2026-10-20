@@ -7,10 +7,18 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+#include "DeviceConfig.h"
 #include "../DevicePersona.h"
 
 namespace PersonaEditor
 {
+    struct Backend
+    {
+        String host;
+        uint16_t port;
+        String path;
+    };
+
     struct Runtime
     {
         String deviceName;
@@ -26,9 +34,11 @@ namespace PersonaEditor
     };
 
     static Runtime persona;
+    static Backend backend;
     static WebServer server(80);
     static bool serverStarted = false;
-    static bool changed = false; // set after a save; BackendComm reconnects so the backend gets the new persona
+    static bool changed = false;        // set after a save; BackendComm reconnects so the backend gets the new persona
+    static bool backendChanged = false; // set when the backend address changed; BackendComm reconnects to the new address
 
     inline void load()
     {
@@ -45,6 +55,12 @@ namespace PersonaEditor
         persona.voice = prefs.getInt("voice", kGenerationSettings.voice);
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
             persona.notifications[i] = prefs.getString(("n" + String(i)).c_str(), kNotificationGuidance[i].instruction);
+        prefs.end();
+
+        prefs.begin("device-cfg", true);
+        backend.host = prefs.getString("backendHost", DeviceConfig::kFallbackBackendHost);
+        backend.port = prefs.getUShort("backendPort", DeviceConfig::kFallbackBackendPort);
+        backend.path = prefs.getString("backendPath", DeviceConfig::kFallbackBackendPath);
         prefs.end();
     }
 
@@ -86,7 +102,7 @@ namespace PersonaEditor
                 "textarea{height:12em}button{margin:1em .5em 0 0;padding:.6em 1.2em}"
                 "</style></head><body><h2>Device persona</h2>";
         if (server.hasArg("saved"))
-            html += "<p><b>Saved. The device is reconnecting with the new persona.</b></p>";
+            html += "<p><b>Saved. The device is reconnecting.</b></p>";
         html += "<form method='POST' action='/save'>";
         _field(html, "Device name", "name", persona.deviceName);
         html += "<label>System prompt<textarea name='prompt'>" + _escape(persona.systemPrompt) + "</textarea></label>";
@@ -102,9 +118,15 @@ namespace PersonaEditor
             html += "<label>Notification '" + _escape(kNotificationGuidance[i].name) + "'<textarea style='height:5em' name='n" + String(i) + "'>" +
                     _escape(persona.notifications[i]) + "</textarea></label>";
         }
+        html += "<h2>Backend connection</h2>";
+        _field(html, "Backend host (IP or name.local)", "backendHost", backend.host);
+        _field(html, "Backend port", "backendPort", String(backend.port));
+        _field(html, "Backend path", "backendPath", backend.path);
         html += "<button type='submit'>Save</button></form>"
-                "<form method='POST' action='/reset' onsubmit=\"return confirm('Erase saved values and use the flashed defaults?')\">"
-                "<button type='submit'>Reset to defaults</button></form></body></html>";
+                "<form method='POST' action='/reset' onsubmit=\"return confirm('Erase saved persona values and use the flashed defaults?')\">"
+                "<button type='submit'>Reset persona to defaults</button></form>"
+                "<form method='POST' action='/resetBackend' onsubmit=\"return confirm('Erase the saved backend address and use the flashed default?')\">"
+                "<button type='submit'>Reset backend address</button></form></body></html>";
         server.send(200, "text/html", html);
     }
 
@@ -124,6 +146,26 @@ namespace PersonaEditor
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
             prefs.putString(("n" + String(i)).c_str(), server.arg("n" + String(i)));
         prefs.end();
+
+        String host = server.arg("backendHost");
+        host.trim();
+        String path = server.arg("backendPath");
+        path.trim();
+        if (!path.startsWith("/"))
+            path = "/" + path;
+        long port = server.arg("backendPort").toInt();
+        // An empty host or out-of-range port would leave the device unable to reach any backend, so keep the old address.
+        if (host.length() && port > 0 && port <= 65535)
+        {
+            if (host != backend.host || port != backend.port || path != backend.path)
+                backendChanged = true;
+            Preferences cfg;
+            cfg.begin("device-cfg", false);
+            cfg.putString("backendHost", host);
+            cfg.putUShort("backendPort", static_cast<uint16_t>(port));
+            cfg.putString("backendPath", path);
+            cfg.end();
+        }
         load();
         changed = true;
         server.sendHeader("Location", "/?saved=1");
@@ -142,6 +184,21 @@ namespace PersonaEditor
         server.send(303);
     }
 
+    inline void _handleResetBackend()
+    {
+        Preferences prefs;
+        prefs.begin("device-cfg", false);
+        prefs.remove("backendHost");
+        prefs.remove("backendPort");
+        prefs.remove("backendPath");
+        prefs.end();
+        load();
+        backendChanged = true;
+        changed = true;
+        server.sendHeader("Location", "/?saved=1");
+        server.send(303);
+    }
+
     // Call once WiFi is connected.
     inline void startServer()
     {
@@ -150,6 +207,7 @@ namespace PersonaEditor
         server.on("/", HTTP_GET, _handleRoot);
         server.on("/save", HTTP_POST, _handleSave);
         server.on("/reset", HTTP_POST, _handleReset);
+        server.on("/resetBackend", HTTP_POST, _handleResetBackend);
         server.begin();
         serverStarted = true;
         Serial.printf("[Persona] Editor at http://%s/\n", WiFi.localIP().toString().c_str());

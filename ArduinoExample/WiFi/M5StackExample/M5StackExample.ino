@@ -17,8 +17,8 @@
 #include "esp_camera.h"
 
 // --- Servo motor on Port A (UART1) ---
-#define rxPin 2
-#define txPin 1
+#define rxPin 6
+#define txPin 5
 HardwareSerial mySerial(1);
 
 // --- Device state ---
@@ -153,7 +153,7 @@ void take_picture(const String &value)
 DeviceTool deviceTools[] = {
     {"set_sound", "Plays a tone or a sequence of tones. Value is comma-separated \"frequency:durationMs\" segments in Hz:milliseconds, e.g. \"880:200,:100,660:200\"; leave frequency blank for a silent pause.", "string", "write", set_sound, ""},
     {"set_String", "Saves a short note in the device's memory slot. Only call this when explicitly asked to store or remember something; never for ordinary conversation.", "string", "write", set_String, ""},
-    {"set_Motor_Position", "Sets the motor position in degrees. Value is a float representing the desired position with max 1/10 degree accuracy.", "float", "write", set_Motor_Position, ""},
+    {"set_Motor_Position", "Sets the motor position in degrees. Value is a float representing the desired position with max 1/10 degree accuracy. It has continuous rotation and can move beyond 360 degrees ", "float", "write", set_Motor_Position, ""},
     {"set_Motor2_RPM", "Sets the motor 2's RPM. Value is an int representing the desired RPM.", "int", "write", set_Motor2_RPM, ""},
     {"show_yellow_circle", "Shows a yellow circle on the screen for five seconds.", "none", "write", show_yellow_circle, ""},
     {"take_picture", "Capture a photo with the built-in CoreS3 camera and inspect it to answer visual questions.", "none", "read", take_picture, "image/rgb565"},

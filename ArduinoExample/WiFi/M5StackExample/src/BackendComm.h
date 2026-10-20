@@ -758,7 +758,20 @@ namespace BackendComm
         _startWebSocket();
         _startAnalogMic();
         PersonaEditor::handleClient();
-        if (PersonaEditor::changed)
+        if (PersonaEditor::backendChanged)
+        {
+            PersonaEditor::backendChanged = false;
+            PersonaEditor::changed = false;
+            backendHost = PersonaEditor::backend.host;
+            backendPort = PersonaEditor::backend.port;
+            backendPath = PersonaEditor::backend.path;
+            displayState.wsTarget = "Target: " + backendHost + ":" + String(backendPort) + backendPath;
+            Serial.printf("[Config] Target backend: ws://%s:%u%s\n", backendHost.c_str(), backendPort, backendPath.c_str());
+            webSocket.disconnect();
+            webSocket.begin(backendHost.c_str(), backendPort, backendPath.c_str());
+            redrawDisplay();
+        }
+        else if (PersonaEditor::changed)
         {
             // Dropping the connection makes the WebSocket client reconnect and re-send deviceInfo.
             PersonaEditor::changed = false;
