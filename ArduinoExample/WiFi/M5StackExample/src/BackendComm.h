@@ -200,6 +200,8 @@ namespace BackendComm
     {
         auto micConfig = M5.Mic.config();
         micConfig.noise_filter_level = kMicNoiseFilterLevel;
+        micConfig.over_sampling = kMicOverSampling;
+        micConfig.stereo = kMicUseStereoAverage;
         M5.Mic.config(micConfig);
     }
 
@@ -680,6 +682,14 @@ namespace BackendComm
                 return;
             analogMicBufferReady = false;
             memcpy(audioBuffer, analogMicBuffer, sizeof(audioBuffer));
+        }
+        else if (kMicUseStereoAverage)
+        {
+            static int16_t stereoBuffer[kAudioChunkSamples * 2];
+            if (!M5.Mic.record(stereoBuffer, kAudioChunkSamples * 2, kSampleRate, true))
+                return;
+            for (size_t i = 0; i < kAudioChunkSamples; i++)
+                audioBuffer[i] = (int16_t)(((int32_t)stereoBuffer[2 * i] + (int32_t)stereoBuffer[2 * i + 1]) / 2);
         }
         else if (!M5.Mic.record(audioBuffer, kAudioChunkSamples, kSampleRate))
         {

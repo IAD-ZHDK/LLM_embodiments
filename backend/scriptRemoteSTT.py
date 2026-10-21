@@ -95,6 +95,27 @@ def read_frame(stream) -> Optional[bytes]:
     return payload
 
 
+def _denoise(audio: "np.ndarray", frame: int = 512, strength: float = 1.5) -> "np.ndarray":
+    """Light spectral-subtraction denoise (numpy only). Noise floor = quietest 15% of frames per bin."""
+    hop = frame // 2
+    if audio.size < frame * 4:
+        return audio
+    window = np.hanning(frame).astype(np.float32)
+    n_frames = 1 + (audio.size - frame) // hop
+    idx = np.arange(frame)[None, :] + hop * np.arange(n_frames)[:, None]
+    spec = np.fft.rfft(audio[idx] * window, axis=1)
+    mag = np.abs(spec)
+    noise = np.percentile(mag, 15, axis=0)
+    clean = np.maximum(mag - strength * noise, 0.1 * mag)
+    frames = np.fft.irfft(clean * np.exp(1j * np.angle(spec)), n=frame, axis=1) * window
+    out = np.zeros(audio.size, dtype=np.float32)
+    norm = np.zeros(audio.size, dtype=np.float32)
+    for i in range(n_frames):
+        out[i * hop:i * hop + frame] += frames[i]
+        norm[i * hop:i * hop + frame] += window * window
+    return (out / np.maximum(norm, 1e-6)).astype(np.float32)
+
+
 class WhisperSession:
     """Segments incoming PCM16 audio with WebRTC VAD and transcribes each utterance with
     faster-whisper. Each remote device gets its own instance/model, so a future version that
@@ -124,10 +145,10 @@ class WhisperSession:
         self.language = None if str(language).lower() in ("auto", "", "none") else str(language)
         self.silence_hangover = silence_hangover
         self.vad = VAD(
-            aggressiveness=1,
+            aggressiveness=2,
             sampling_rate=RATE,
             frame_duration_ms=30,
-            energy_threshold=80,
+            energy_threshold=150,
         )
         self.vad.positive_frames_threshold = 1
         self.vad.min_speech_frames = 1
@@ -179,6 +200,7 @@ class WhisperSession:
         audio_np = np.frombuffer(bytes(buffered), dtype=np.int16).astype(np.float32) / 32768.0
         started_at = time.perf_counter()
         try:
+            audio_np = _denoise(audio_np)
             segments, _info = self.model.transcribe(
                 audio_np,
                 language=self.language,

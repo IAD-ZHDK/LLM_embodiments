@@ -59,6 +59,8 @@ except Exception:
 
 app = FastAPI(title="Wizard of Oz test server")
 
+HOST = "0.0.0.0"
+ADVERTISED_IP: Optional[str] = None
 PORT = 3000
 SAMPLE_RATE = 16000  # must match kSampleRate in the M5Stack sketch / scriptRemoteSTT.py
 AUDIO_CHUNK_BYTES = 1024  # 512 mono int16 samples = 32 ms at 16 kHz
@@ -560,10 +562,11 @@ async def api_send(payload: Dict[str, Any]) -> JSONResponse:
 async def startup() -> None:
     global loop
     loop = asyncio.get_running_loop()
-    print(f"🌐 Wizard of Oz server listening on {_local_ip()}:{PORT}/device")
-    print(f"🎛️  Control panel: http://{_local_ip()}:{PORT}/")
+    shown_ip = ADVERTISED_IP or (_local_ip() if HOST in ("0.0.0.0", "::") else HOST)
+    print(f"🌐 Wizard of Oz server listening on {shown_ip}:{PORT}/device")
+    print(f"🎛️  Control panel: http://{shown_ip}:{PORT}/")
     if os.getenv("WIZARD_NO_BROWSER") != "1":
-        webbrowser.open(f"http://localhost:{PORT}/")
+        webbrowser.open(f"http://{'localhost' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}/")
     threading.Thread(target=_console_loop, daemon=True).start()
 
 
@@ -624,6 +627,29 @@ async def websocket_device(ws: WebSocket) -> None:
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    parser = argparse.ArgumentParser(description="Wizard of Oz server")
+    parser.add_argument("--host", default=os.getenv("WIZARD_HOST", "0.0.0.0"),
+                        help="Interface/IP to bind to (default: 0.0.0.0 = all interfaces)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("WIZARD_PORT", PORT)),
+                        help=f"Port to listen on (default: {PORT})")
+    parser.add_argument("--ip", default=os.getenv("WIZARD_IP"),
+                        help="IP to display/advertise (does not change binding; use when auto-detection is wrong)")
+    args = parser.parse_args()
+    HOST = args.host
+    PORT = args.port
+    ADVERTISED_IP = args.ip
+
+    if HOST not in ("0.0.0.0", "::"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind((HOST, PORT))
+        except OSError as exc:
+            sys.exit(
+                f"❌ Cannot bind to {HOST}:{PORT} ({exc}). {HOST} is not an address of this machine "
+                f"(this machine: {_local_ip()}). Use --host 0.0.0.0, or --ip {HOST} to only change the displayed address."
+            )
+
+    uvicorn.run(app, host=HOST, port=PORT)

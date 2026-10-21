@@ -70,7 +70,11 @@ inline bool muteButtonContains(int x, int y, int buttonX)
 }
 
 // 0 disables M5Unified's built-in filter; 64 is a conservative starting point for CoreS3's ES7210 mics.
-inline const uint8_t kMicNoiseFilterLevel = 64;
+inline const uint8_t kMicNoiseFilterLevel = 128;
+
+// Record both CoreS3 mics (stereo) and average them into the mono stream; ~3 dB less uncorrelated noise.
+inline const bool kMicUseStereoAverage = true;
+inline const uint8_t kMicOverSampling = 2;
 
 inline void redrawDisplay()
 {
