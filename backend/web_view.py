@@ -19,6 +19,13 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+try:
+    from .model_downloader import PIPER_VOICE_PRESETS, extra_piper_voices
+except ImportError:
+    from model_downloader import PIPER_VOICE_PRESETS, extra_piper_voices
+
+TTS_PRESET_FILES = [f"{stem}.onnx" for stem in PIPER_VOICE_PRESETS]
+
 _HTML_PATH = Path(__file__).with_name("web_view.html")
 _CONSOLE_LINES = 2000
 _DEVICE_LINES = 500
@@ -36,7 +43,7 @@ _state: Dict[str, Any] = {
     "models": {
         "llm": {"current": "", "options": []},
         "stt": {"current": "", "options": []},
-        "tts": {"current": "", "options": []},
+        "tts": {"current": "", "options": [], "presets": TTS_PRESET_FILES},
     },
     "console": deque(maxlen=_CONSOLE_LINES),
     "sessions": {},

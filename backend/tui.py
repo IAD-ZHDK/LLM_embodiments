@@ -299,7 +299,12 @@ class TerminalUI(App):
         voices = list(dict.fromkeys(([self.tts_model] if self.tts_model else []) + self.tts_models))
         if not voices:
             return "(none installed)"
-        return "\n".join(f"{'* ' if v == self.tts_model else '  '}{v}" for v in voices)
+        presets = web_view.TTS_PRESET_FILES
+        numbered = {v: presets.index(v) + 1 for v in voices if v in presets}
+        for offset, v in enumerate(web_view.extra_piper_voices(voices)):
+            numbered[v] = len(presets) + 1 + offset
+        voices.sort(key=lambda v: numbered[v])
+        return "\n".join(f"{'* ' if v == self.tts_model else '  '}{numbered[v]}. {v}" for v in voices)
 
     def _refresh_tts_list(self) -> None:
         try:

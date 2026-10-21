@@ -32,6 +32,23 @@
   img { max-width: 100%; max-height: 160px; filter: grayscale(1); display: block; }
   .thinking { opacity: .55; font-style: italic; }
   #conn { float: right; opacity: .6; }
+  .icon-btn { font-size: 1.2em; line-height: 1; padding: 2px 8px; }
+  .device-head .icon-btn:first-of-type { margin-left: auto; }
+  .close-btn { display: none; }
+  body.focused .device.focused .close-btn { display: inline-block; position: fixed; top: 10px; right: 10px; z-index: 5; }
+  body.focused .device.focused .icon-btn:not(.close-btn) { display: none; }
+  .device-head { display: flex; align-items: center; gap: 8px; }
+  button { background: #000; color: #fff; border: 1px solid #fff; font: inherit; padding: 2px 8px; cursor: pointer; }
+  button:hover { background: #fff; color: #000; }
+  body.focused #left { display: none; }
+  body.focused #layout { grid-template-columns: 1fr; }
+  body.focused #devices { display: block; }
+  body.focused .device:not(.focused) { display: none; }
+  body.focused .device.focused { height: 100%; font-size: 1.25em; }
+  body.focused.waiting .device { display: none; }
+  #focus-wait { display: none; position: fixed; inset: 0; background: #000; z-index: 10;
+    flex-direction: column; align-items: center; justify-content: center; gap: 16px; font-size: 20px; }
+  body.focused.waiting #focus-wait { display: flex; }
   @media (max-width: 800px) {
     html, body { height: auto; }
     #layout { display: block; height: auto; }
@@ -43,6 +60,7 @@
 </style>
 </head>
 <body>
+<div id="focus-wait"><div id="focus-wait-text"></div><button id="focus-exit">✕ Back to overview (Esc)</button></div>
 <div id="layout">
   <div id="left">
     <section>
@@ -102,7 +120,13 @@ function setSelect(select, entry) {
 function renderModels(models) {
   for (const key of ["llm", "stt"]) setSelect($("sel-" + key), models[key]);
   const tts = models.tts;
-  $("tts-list").replaceChildren(...tts.options.map((o) => el("div", { textContent: (o === tts.current ? "\u2022 " : "\u00a0\u00a0") + o })));
+  const presets = tts.presets || [];
+  const extras = tts.options.filter((o) => !presets.includes(o)).sort();
+  const num = (o) => (presets.includes(o) ? presets.indexOf(o) + 1 : presets.length + 1 + extras.indexOf(o));
+  const sorted = [...tts.options].sort((a, b) => num(a) - num(b));
+  $("tts-list").replaceChildren(...sorted.map((o) => el("div", {
+    textContent: (o === tts.current ? "\u2022 " : "\u00a0\u00a0") + num(o) + ". " + o,
+  })));
 }
 
 function renderSessions(sessions) {
@@ -136,6 +160,12 @@ function addDevice(id, d) {
   const refs = { data: d };
   refs.title = el("div", { textContent: d.name || "Device " + id });
   refs.title.style.fontWeight = "bold";
+  const focusBtn = el("button", { className: "icon-btn", textContent: "\u26F6", title: "Show only this device", ariaLabel: "Full screen" });
+  focusBtn.addEventListener("click", () => setFocus(id));
+  const closeBtn = el("button", { className: "icon-btn close-btn", textContent: "\u2715", title: "Back to overview (Esc)", ariaLabel: "Exit full screen" });
+  closeBtn.addEventListener("click", clearFocus);
+  refs.head = el("div", { className: "device-head" }, refs.title, focusBtn, closeBtn);
+  refs.focusBtn = focusBtn;
   refs.status = el("div");
   const mic = checkbox("Mute mic", d.mic_muted, (v) => send({ action: "mic", id, value: v }));
   const spk = checkbox("Mute speaker", d.speaker_muted, (v) => send({ action: "speaker", id, value: v }));
@@ -155,7 +185,7 @@ function addDevice(id, d) {
     }
   });
   const info = el("div", { className: "info" },
-    refs.title, refs.status,
+    refs.head, refs.status,
     el("div", { className: "row" }, inLocal.node, mic.node),
     el("div", { className: "row" }, outLocal.node, spk.node),
     el("h2", { textContent: "Tools" }), refs.tools,
@@ -169,6 +199,48 @@ function addDevice(id, d) {
   refs.now.textContent = renderNow(d);
   if (d.image) setImage(refs, d.image);
   (d.log || []).forEach((line) => appendLog(refs, line));
+  tryReattach(id);
+}
+
+// Focus mode. A device gets a new session id every time it reconnects, so the focus is
+// remembered by the device's network address (or its kind as a fallback) and re-attached
+// when a matching device appears again.
+const focus = { id: null, key: null, kind: null };
+
+function deviceKey(refs) { return refs.data.address || ""; }
+
+function applyFocus() {
+  const active = focus.key !== null;
+  const present = active && focus.id !== null && devices.has(focus.id);
+  document.body.classList.toggle("focused", active);
+  document.body.classList.toggle("waiting", active && !present);
+  devices.forEach((r, id) => r.root.classList.toggle("focused", present && id === focus.id));
+  if (active && !present) {
+    $("focus-wait-text").textContent = "Waiting for " + (focus.key || focus.kind || "device") + " to reconnect…";
+  }
+}
+
+function setFocus(id) {
+  const refs = devices.get(id);
+  if (!refs) return;
+  focus.id = id;
+  focus.key = deviceKey(refs);
+  focus.kind = refs.data.kind;
+  applyFocus();
+}
+
+function clearFocus() {
+  focus.id = null; focus.key = null; focus.kind = null;
+  applyFocus();
+}
+
+function tryReattach(id) {
+  if (focus.key === null || (focus.id !== null && devices.has(focus.id))) return;
+  const refs = devices.get(id);
+  if (!refs) return;
+  const key = deviceKey(refs);
+  const matches = focus.key ? key === focus.key : (!key && refs.data.kind === focus.kind);
+  if (matches) { focus.id = id; applyFocus(); }
 }
 
 function appendLog(refs, line) {
@@ -186,6 +258,7 @@ function setField(id, field, value) {
   refs.data[field] = value;
   const d = refs.data;
   switch (field) {
+    case "address": tryReattach(id); break;
     case "name": refs.title.textContent = value || "Device " + id; break;
     case "tools": refs.tools.textContent = renderTools(value); break;
     case "stt": case "prompt": case "response": refs.now.textContent = renderNow(d); break;
@@ -209,6 +282,7 @@ function handle(m) {
       devices.forEach((r) => r.root.remove());
       devices.clear();
       Object.entries(m.devices).forEach(([id, d]) => addDevice(id, d));
+      applyFocus();
       break;
     case "console": appendLine($("console"), m.text); break;
     case "summary": $("summary").textContent = m.summary; break;
@@ -222,12 +296,20 @@ function handle(m) {
       break;
     }
     case "session_removed": $("session-" + m.id)?.remove(); break;
-    case "device_added": addDevice(m.id, m.device); break;
-    case "device_removed": devices.get(m.id)?.root.remove(); devices.delete(m.id); break;
+    case "device_added": addDevice(m.id, m.device); applyFocus(); break;
+    case "device_removed":
+      devices.get(m.id)?.root.remove();
+      devices.delete(m.id);
+      if (focus.id === m.id) focus.id = null;
+      applyFocus();
+      break;
     case "device_log": { const r = devices.get(m.id); if (r) appendLog(r, m.text); break; }
     case "device_field": setField(m.id, m.field, m.value); break;
   }
 }
+
+$("focus-exit").addEventListener("click", clearFocus);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && focus.key !== null) clearFocus(); });
 
 for (const key of ["llm", "stt"]) {
   $("sel-" + key).addEventListener("change", (e) => send({ action: "model", kind: key, value: e.target.value }));

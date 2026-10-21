@@ -27,10 +27,17 @@ def piper_voice_urls(stem):
     return base, base + ".json"
 
 
-def piper_voice_for_number(number):
-    """Map a 1-based preset number to a voice filename; out-of-range clamps to the last preset."""
-    index = min(max(int(number), 1), len(PIPER_VOICE_PRESETS)) - 1
-    return PIPER_VOICE_PRESETS[index] + ".onnx"
+def extra_piper_voices(installed):
+    """Installed voice filenames beyond the presets, sorted; they are numbered after the presets."""
+    preset_files = {stem + ".onnx" for stem in PIPER_VOICE_PRESETS}
+    return sorted(v for v in installed if v not in preset_files)
+
+
+def piper_voice_for_number(number, installed=()):
+    """Map a 1-based number to a voice filename. Presets come first, then other installed voices
+    (sorted); out-of-range numbers clamp to the last voice."""
+    voices = [stem + ".onnx" for stem in PIPER_VOICE_PRESETS] + extra_piper_voices(installed)
+    return voices[min(max(int(number), 1), len(voices)) - 1]
 
 
 def download_preset_voices(output_dir):

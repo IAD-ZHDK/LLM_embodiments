@@ -1009,7 +1009,7 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
     speech = device_info.get("speech")
     if isinstance(speech, dict):
         try:
-            session.tts_model = piper_voice_for_number(int(speech["voice"]))
+            session.tts_model = piper_voice_for_number(int(speech["voice"]), _list_tts_models())
             print(f"🔊 [{session.session_id}] Device TTS voice: {session.tts_model}")
         except (KeyError, TypeError, ValueError):
             pass
@@ -1255,6 +1255,7 @@ async def websocket_device(ws: WebSocket) -> None:
     state.sessions[session_id] = session
 
     tui.add_device_tab(session_id, kind="WiFi")
+    web_view.set_field(session_id, "address", ws.client.host if ws.client else "")
     tui.update_session(session_id, kind="WiFi", status="connected")
     tui.update_tools(session_id, [])
     _start_session_stt(session, source="local" if session.audio_input_local else "remote")
