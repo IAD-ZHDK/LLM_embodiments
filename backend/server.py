@@ -215,13 +215,20 @@ def _list_ollama_models() -> List[str]:
 
 
 def _persist_config_values(section_name: str, values: Dict[str, Any]) -> None:
-    config_path = REPO_ROOT / "config.toml"
-    document = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    # Runtime choices go to the git-ignored config.local.toml so pulling a new version never overwrites them.
+    config_path = REPO_ROOT / "config.local.toml"
+    if config_path.exists():
+        document = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+        file_mode = stat.S_IMODE(config_path.stat().st_mode)
+    else:
+        document = tomlkit.document()
+        file_mode = 0o644
+    if section_name not in document:
+        document[section_name] = tomlkit.table()
     section = document[section_name]
     for key, value in values.items():
         section[key] = value
 
-    file_mode = stat.S_IMODE(config_path.stat().st_mode)
     temp_path: Optional[str] = None
     try:
         file_descriptor, temp_path = tempfile.mkstemp(
@@ -243,7 +250,17 @@ def _persist_config_values(section_name: str, values: Dict[str, Any]) -> None:
         session.config.setdefault(section_name, {}).update(values)
 
 
+def _models_locked() -> bool:
+    return bool(state.config.get("lockModelSelection", False))
+
+
+def _ensure_models_unlocked() -> None:
+    if _models_locked():
+        raise ValueError("Model selection is locked (lockModelSelection = true in config.local.toml)")
+
+
 def _set_llm_model_from_ui(model: str) -> str:
+    _ensure_models_unlocked()
     model = str(model).strip()
     if not model:
         raise ValueError("Model name cannot be empty")
@@ -251,7 +268,7 @@ def _set_llm_model_from_ui(model: str) -> str:
     for session in state.sessions.values():
         session.llm_api.model = model
 
-    print(f"🧠 LLM model changed to {model} and saved to config.toml")
+    print(f"🧠 LLM model changed to {model} and saved to config.local.toml")
     provider = str(state.config.get("llmSettings", {}).get("provider", "ollama"))
     return f"LLM: {model} ({provider})"
 
@@ -296,6 +313,7 @@ def _list_tts_models() -> List[str]:
 
 
 def _set_stt_model_from_ui(model: str) -> None:
+    _ensure_models_unlocked()
     model = str(model).strip()
     if model not in _list_stt_models():
         raise ValueError(f"Unknown STT model: {model}")
@@ -307,7 +325,7 @@ def _set_stt_model_from_ui(model: str) -> None:
         _start_session_stt(session, source="local" if session.audio_input_local else "remote")
         if session.stt and session.audio_mic_muted:
             session.stt.pause()
-    print(f"🎤 STT model changed to {model} and saved to config.toml")
+    print(f"🎤 STT model changed to {model} and saved to config.local.toml")
 
 
 def _set_tts_model_from_ui(model: str) -> None:
@@ -315,7 +333,7 @@ def _set_tts_model_from_ui(model: str) -> None:
     if model not in _list_tts_models():
         raise ValueError(f"Unknown TTS model: {model}")
     _persist_config_values("speech", {"textToSpeechModel": model})
-    print(f"🔊 TTS model changed to {model} and saved to config.toml")
+    print(f"🔊 TTS model changed to {model} and saved to config.local.toml")
 
 
 def _parse_piper_voice_path(voice: str) -> tuple[str, str]:
@@ -1002,7 +1020,7 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
         if isinstance(settings, dict):
             applied: List[str] = []
             model = generation.get("model")
-            if isinstance(model, str) and model.strip() and settings.get("allowDeviceModelOverride", True):
+            if isinstance(model, str) and model.strip() and settings.get("allowDeviceModelOverride", True) and not _models_locked():
                 settings["model"] = model.strip()
                 applied.append(f"model={model.strip()}")
 

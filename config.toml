@@ -14,6 +14,12 @@ communicationMethod = "WiFi"  # "Serial", "BLE", or "WiFi" (e.g. ArduinoExample/
 # conversation history, and STT session, so they don't interfere with each other.
 maxDeviceSessions = 10
 
+# Lock the LLM and STT model selection (TUI, web viewer and device overrides are all refused).
+# Set this in config.local.toml, NOT here: config.local.toml is git-ignored, so it survives
+# updateFromRemote / git pull, whereas this file is reset to the repository version.
+# Models picked in the UI are also saved to config.local.toml for the same reason.
+lockModelSelection = false
+
 # Global text to speech operation flag
 ttsEnabled = true
 

@@ -54,7 +54,7 @@
       <h2>Global settings</h2>
       <div class="field"><span class="label">LLM model</span><select id="sel-llm"></select></div>
       <div class="field"><span class="label">STT model</span><select id="sel-stt"></select></div>
-      <div class="field"><span class="label">TTS model</span><select id="sel-tts"></select></div>
+      <div class="field"><span class="label">TTS voices</span><div id="tts-list"></div></div>
       <div class="field"><span class="label">Add TTS voice</span>
         <input type="text" id="add-voice" placeholder="e.g. en_GB-alan-low + Enter"></div>
     </section>
@@ -100,7 +100,9 @@ function setSelect(select, entry) {
 }
 
 function renderModels(models) {
-  for (const key of ["llm", "stt", "tts"]) setSelect($("sel-" + key), models[key]);
+  for (const key of ["llm", "stt"]) setSelect($("sel-" + key), models[key]);
+  const tts = models.tts;
+  $("tts-list").replaceChildren(...tts.options.map((o) => el("div", { textContent: (o === tts.current ? "\u2022 " : "\u00a0\u00a0") + o })));
 }
 
 function renderSessions(sessions) {
@@ -227,7 +229,7 @@ function handle(m) {
   }
 }
 
-for (const key of ["llm", "stt", "tts"]) {
+for (const key of ["llm", "stt"]) {
   $("sel-" + key).addEventListener("change", (e) => send({ action: "model", kind: key, value: e.target.value }));
 }
 $("add-voice").addEventListener("keydown", (e) => {

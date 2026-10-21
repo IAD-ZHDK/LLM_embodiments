@@ -28,3 +28,6 @@ python-scripts/venv/
 
 # Real device WiFi/backend credentials (see WifiSecrets.example.h for the template)
 WifiSecrets.h
+
+# Local overrides (locked/chosen models); survives git pull
+config.local.toml

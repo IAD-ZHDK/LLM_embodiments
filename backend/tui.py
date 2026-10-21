@@ -233,7 +233,6 @@ class TerminalUI(App):
                             for label, model, options, control_id in (
                                 ("LLM model", self.model_name, [self.model_name] if self.model_name else [], "model-select"),
                                 ("STT model", self.stt_model, self.stt_models, "stt-model-select"),
-                                ("TTS model", self.tts_model, self.tts_models, "tts-model-select"),
                             ):
                                 choices = list(dict.fromkeys(([model] if model else []) + options))
                                 with Horizontal(classes="model-control"):
@@ -245,6 +244,9 @@ class TerminalUI(App):
                                         id=control_id,
                                         classes="model-select",
                                     )
+                            with Horizontal(classes="model-control"):
+                                yield Static("TTS voices", classes="model-label pane-heading")
+                                yield Static(self._tts_list_text(), id="tts-model-list", classes="model-select")
                             with Horizontal(classes="model-control"):
                                 yield Static("Add TTS voice", classes="model-label pane-heading")
                                 yield Input(
@@ -293,6 +295,18 @@ class TerminalUI(App):
         except RuntimeError:
             pass
 
+    def _tts_list_text(self) -> str:
+        voices = list(dict.fromkeys(([self.tts_model] if self.tts_model else []) + self.tts_models))
+        if not voices:
+            return "(none installed)"
+        return "\n".join(f"{'* ' if v == self.tts_model else '  '}{v}" for v in voices)
+
+    def _refresh_tts_list(self) -> None:
+        try:
+            self.query_one("#tts-model-list", Static).update(self._tts_list_text())
+        except Exception:
+            pass
+
     def _set_model_options(
         self,
         models: List[str],
@@ -307,7 +321,6 @@ class TerminalUI(App):
             for selector_id, current, model_list in (
                 ("model-select", self.model_name, models),
                 ("stt-model-select", self.stt_model, stt_models),
-                ("tts-model-select", self.tts_model, tts_models),
             ):
                 try:
                     selector = self.query_one(f"#{selector_id}", Select)
@@ -321,6 +334,8 @@ class TerminalUI(App):
                 selector.set_options((model, model) for model in clean_models)
                 if current in clean_models:
                     selector.value = current
+            self.tts_models = [m.strip() for m in tts_models if m.strip()]
+            self._refresh_tts_list()
         finally:
             self._updating_model_options = False
 
@@ -331,7 +346,6 @@ class TerminalUI(App):
         control = {
             "model-select": ("model_name", self._on_change_model),
             "stt-model-select": ("stt_model", self._on_change_stt_model),
-            "tts-model-select": ("tts_model", self._on_change_tts_model),
         }.get(event.select.id or "")
         if not control:
             return
@@ -360,9 +374,13 @@ class TerminalUI(App):
         attribute, selector_id = {
             "llm": ("model_name", "model-select"),
             "stt": ("stt_model", "stt-model-select"),
-            "tts": ("tts_model", "tts-model-select"),
+            "tts": ("tts_model", ""),
         }[key]
         setattr(self, attribute, model)
+        if key == "tts":
+            self.tts_models = list(dict.fromkeys([model] + web_view.model_options("tts")))
+            self._refresh_tts_list()
+            return
         self._updating_model_options = True
         try:
             selector = self.query_one(f"#{selector_id}", Select)
@@ -439,15 +457,7 @@ class TerminalUI(App):
         self.log_line(f"✅ Added and selected TTS voice '{new_model}'")
         self.tts_models = list(dict.fromkeys([new_model] + self.tts_models))
         self.tts_model = new_model
-        self._updating_model_options = True
-        try:
-            selector = self.query_one("#tts-model-select", Select)
-            selector.set_options((m, m) for m in self.tts_models)
-            selector.value = new_model
-        except Exception:
-            pass
-        finally:
-            self._updating_model_options = False
+        self._refresh_tts_list()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         checkbox_id = event.checkbox.id or ""
