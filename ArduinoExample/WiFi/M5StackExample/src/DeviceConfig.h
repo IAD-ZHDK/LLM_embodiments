@@ -73,8 +73,8 @@ inline bool muteButtonContains(int x, int y, int buttonX)
 inline const uint8_t kMicNoiseFilterLevel = 128;
 
 // Record both CoreS3 mics (stereo) and average them into the mono stream; ~3 dB less uncorrelated noise.
-inline const bool kMicUseStereoAverage = true;
-inline const uint8_t kMicOverSampling = 2;
+inline const bool kMicUseStereoAverage = false;
+inline const uint8_t kMicOverSampling = 1;
 
 inline void redrawDisplay()
 {

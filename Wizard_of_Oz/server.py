@@ -136,7 +136,7 @@ def _start_conversation(device_info: Dict[str, Any]) -> None:
         messages.append({"role": "system", "content": persona})
     for turn in device_info.get("history", []):
         if isinstance(turn, dict) and turn.get("role") in ("user", "assistant") and str(turn.get("content", "")).strip():
-            messages.append({"role": turn["role"], "content": str(turn["content"]).strip()})
+            messages.append({"role": turn["role"], "content": str(turn["content"]).str()})
 
     device_name = str(device_info.get("deviceName", "")).strip()
     with convo_lock:
