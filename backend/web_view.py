@@ -8,6 +8,7 @@ import re
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -95,7 +96,17 @@ def open_fullscreen_on_windows(delay: float = 3.0) -> None:
         for exe in candidates:
             if exe.exists():
                 try:
-                    subprocess.Popen([str(exe), "--new-window", "--start-fullscreen", target])
+                    # A separate profile forces a fresh browser instance, so the flag isn't ignored
+                    # by an already-running browser and no previous window state is restored.
+                    profile = Path(tempfile.gettempdir()) / "llm_embodiments_viewer_profile"
+                    subprocess.Popen([
+                        str(exe),
+                        f"--user-data-dir={profile}",
+                        "--no-first-run",
+                        "--new-window",
+                        "--start-fullscreen",
+                        target,
+                    ])
                     return
                 except OSError:
                     continue
