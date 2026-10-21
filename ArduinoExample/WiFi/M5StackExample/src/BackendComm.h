@@ -31,6 +31,16 @@ namespace BackendComm
     static int16_t deviceAudioBuffers[3][kDeviceAudioChunkSamples];
     static uint8_t deviceAudioBufferIndex = 0;
 
+    // Jitter buffer: hold the first chunks of a reply until enough have arrived (or the timeout hits)
+    // so Wi-Fi latency spikes don't starve the speaker. Each chunk is ~128ms at 16kHz.
+    static const size_t kPrebufferChunks = 4;
+    static const unsigned long kPrebufferTimeoutMs = 600;
+    static int16_t prebufferChunks[kPrebufferChunks][kDeviceAudioChunkSamples];
+    static size_t prebufferSamples[kPrebufferChunks];
+    static size_t prebufferCount = 0;
+    static bool prebuffering = false;
+    static unsigned long prebufferStartedAt = 0;
+
     static Preferences preferences;
     static WebSocketsClient webSocket;
 
@@ -83,6 +93,8 @@ namespace BackendComm
         }
         deviceSpeaking = false;
         audioStreamEnded = false;
+        prebuffering = false;
+        prebufferCount = 0;
         _updateMicStatus();
         displayState.micLevel = 0;
         _sendAudioFinished();
@@ -90,14 +102,8 @@ namespace BackendComm
         drawMicLevelBar();
     }
 
-    inline void _playDeviceAudio(uint8_t *payload, size_t length)
+    inline void _submitDeviceAudio(const uint8_t *payload, size_t samples)
     {
-        if (!deviceSpeaking || length < sizeof(int16_t))
-            return;
-        const size_t samples = length / sizeof(int16_t);
-        if (samples > kDeviceAudioChunkSamples)
-            return;
-
         // M5Unified queues two buffers. Keep three owned buffers and wait for a free slot so
         // WebSocket payload memory cannot be reused while the I2S task is still reading it.
         while (M5.Speaker.isPlaying(kDeviceAudioChannel) >= 2)
@@ -108,6 +114,33 @@ namespace BackendComm
         M5.Speaker.playRaw(buffer, samples, playbackSampleRate, false, 1, kDeviceAudioChannel);
         unsigned long durationMs = (samples * 1000UL + playbackSampleRate - 1) / playbackSampleRate;
         audioPlaybackEndsAt = max(audioPlaybackEndsAt, millis()) + durationMs;
+    }
+
+    inline void _flushPrebuffer()
+    {
+        prebuffering = false;
+        for (size_t i = 0; i < prebufferCount; i++)
+            _submitDeviceAudio(reinterpret_cast<const uint8_t *>(prebufferChunks[i]), prebufferSamples[i]);
+        prebufferCount = 0;
+    }
+
+    inline void _playDeviceAudio(uint8_t *payload, size_t length)
+    {
+        if (!deviceSpeaking || length < sizeof(int16_t))
+            return;
+        const size_t samples = length / sizeof(int16_t);
+        if (samples > kDeviceAudioChunkSamples)
+            return;
+
+        if (prebuffering)
+        {
+            memcpy(prebufferChunks[prebufferCount], payload, samples * sizeof(int16_t));
+            prebufferSamples[prebufferCount++] = samples;
+            if (prebufferCount >= kPrebufferChunks)
+                _flushPrebuffer();
+            return;
+        }
+        _submitDeviceAudio(payload, samples);
     }
 
     // --- Analog microphone fallback, used only when M5.Mic reports no built-in mic (e.g. a bare
@@ -465,6 +498,9 @@ namespace BackendComm
             deviceSpeaking = true;
             audioStreamEnded = false;
             audioPlaybackEndsAt = millis();
+            prebufferCount = 0;
+            prebuffering = true;
+            prebufferStartedAt = millis();
             displayState.micLevel = 0;
             _updateMicStatus();
             if (!useAnalogMic && M5.Mic.isEnabled())
@@ -480,6 +516,8 @@ namespace BackendComm
         }
         else if (doc["audioEnd"].is<bool>() && doc["audioEnd"].as<bool>())
         {
+            if (prebuffering)
+                _flushPrebuffer();
             audioStreamEnded = true;
         }
         else if (doc["debug"].is<const char *>())
@@ -556,6 +594,8 @@ namespace BackendComm
         displayState.wifiStatus = "WiFi: connecting...";
         redrawDisplay();
         WiFi.mode(WIFI_STA);
+        // Modem sleep batches downstream packets to beacon intervals, which makes audio arrive in bursts.
+        WiFi.setSleep(false);
 
         const unsigned long kConnectionTimeoutMs = 20000;
         bool hasSavedCredentials = !wifiSsid.isEmpty();
@@ -737,6 +777,8 @@ namespace BackendComm
     {
         _checkMuteControl();
         _restoreMicAfterTone();
+        if (prebuffering && prebufferCount > 0 && millis() - prebufferStartedAt >= kPrebufferTimeoutMs)
+            _flushPrebuffer();
         if (deviceSpeaking && audioStreamEnded && audioPlaybackEndsAt != 0 && millis() >= audioPlaybackEndsAt)
             _finishDeviceSpeech();
         if (WiFi.status() != WL_CONNECTED)
