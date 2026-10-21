@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import os
+import subprocess
+import sys
 import threading
+import time
 import webbrowser
 from collections import deque
 from pathlib import Path
@@ -71,6 +75,33 @@ def url() -> str:
 def open_window() -> None:
     # new=1 asks the browser for a new window; browsers may still open it as a tab.
     webbrowser.open(url(), new=1)
+
+
+def open_fullscreen_on_windows(delay: float = 3.0) -> None:
+    """On Windows, open the viewer full screen in Edge/Chrome once the server has had time to start."""
+    if sys.platform != "win32":
+        return
+
+    def _launch() -> None:
+        time.sleep(delay)
+        target = url()
+        candidates = []
+        for env in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+            base = os.environ.get(env)
+            if not base:
+                continue
+            candidates.append(Path(base) / "Microsoft/Edge/Application/msedge.exe")
+            candidates.append(Path(base) / "Google/Chrome/Application/chrome.exe")
+        for exe in candidates:
+            if exe.exists():
+                try:
+                    subprocess.Popen([str(exe), "--new-window", "--start-fullscreen", target])
+                    return
+                except OSError:
+                    continue
+        webbrowser.open(target, new=1)
+
+    threading.Thread(target=_launch, daemon=True).start()
 
 
 def _load_model_options() -> None:

@@ -1023,6 +1023,7 @@ async def start(
         },
         {"llm": model_name, "stt": stt_model, "tts": tts_model},
     )
+    web_view.open_fullscreen_on_windows()
     _original_print = builtins.print
     builtins.print = _tui_print
     try:
