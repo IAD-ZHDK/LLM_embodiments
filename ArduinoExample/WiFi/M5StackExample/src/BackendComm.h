@@ -331,6 +331,19 @@ namespace BackendComm
         webSocket.sendTXT(payload);
     }
 
+    // Sends text straight to the LLM as if the user had said it (no STT involved).
+    inline bool sendText(const String &text)
+    {
+        if (!serverConnected || text.isEmpty())
+            return false;
+        displayState.lastNotification = "text: " + text;
+        JsonDocument doc;
+        doc["userText"] = text;
+        String payload;
+        serializeJson(doc, payload);
+        return webSocket.sendTXT(payload);
+    }
+
     inline bool sendCameraFrame(uint8_t *buffer, size_t length, uint16_t width, uint16_t height)
     {
         if (!serverConnected || !buffer || length == 0)
@@ -379,6 +392,13 @@ namespace BackendComm
 
     inline void _applyAudioMuteState(bool muteMic, bool muteSpeaker, bool reportToBackend)
     {
+        bool requestedMic = muteMic;
+        bool requestedSpeaker = muteSpeaker;
+        muteMic = muteMic || kForceMicMuted;
+        muteSpeaker = muteSpeaker || kForceSpeakerMuted;
+        // If the backend tried to unmute a hardcoded-muted channel, tell it the real state.
+        if (muteMic != requestedMic || muteSpeaker != requestedSpeaker)
+            reportToBackend = true;
         micMuted = muteMic;
         speakerMuted = muteSpeaker;
         displayState.micMuted = micMuted;
@@ -768,6 +788,11 @@ namespace BackendComm
         _loadBootstrapConfig();
         PersonaEditor::load();
         displayState.wsTarget = "Target: " + backendHost + ":" + String(backendPort) + backendPath;
+        micMuted = kForceMicMuted;
+        speakerMuted = kForceSpeakerMuted;
+        displayState.micMuted = micMuted;
+        displayState.speakerMuted = speakerMuted;
+        _updateMicStatus();
         Serial.printf("[Config] Target backend: ws://%s:%u%s\n", backendHost.c_str(), backendPort, backendPath.c_str());
         _connectWifi();
         if (WiFi.status() == WL_CONNECTED)

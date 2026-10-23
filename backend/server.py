@@ -741,6 +741,19 @@ async def _process_terminal_prompt(session_id: Optional[str], text: str) -> None
         await _handle_llm_response(session, response)
 
 
+async def _process_device_text(session_id: str, text: str) -> None:
+    # Text typed/produced on the microcontroller; goes straight to the LLM, bypassing STT.
+    session = state.sessions.get(session_id)
+    if not session:
+        return
+    print(f"⌨️ [{session_id}] Device text -> LLM: {text}")
+    tui.update_stt(session_id, text)
+    tui.log_device(session_id, f"⌨️ Text: {text}")
+    response = await _call_llm(session, text, "user", "device-text")
+    if response:
+        await _handle_llm_response(session, response)
+
+
 def _stt_callback(session_id: str, msg: Dict[str, Any]) -> None:
     _submit(_process_stt_message(session_id, msg))
 
@@ -1292,6 +1305,10 @@ async def websocket_device(ws: WebSocket) -> None:
             elif isinstance(data.get("notification"), dict):
                 notification = data["notification"]
                 comm.receive(str(notification.get("name", "")), str(notification.get("value", "")))
+            elif isinstance(data.get("userText"), str):
+                user_text = data["userText"].strip()
+                if user_text:
+                    _submit(_process_device_text(session_id, user_text))
             elif isinstance(data.get("audioState"), dict):
                 audio_state = data["audioState"]
                 mic_muted = audio_state.get("micMuted")

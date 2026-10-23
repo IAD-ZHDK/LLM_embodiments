@@ -69,6 +69,12 @@ inline bool muteButtonContains(int x, int y, int buttonX)
            y >= buttonY && y < buttonY + kMuteButtonHeight;
 }
 
+// Hardcoded mutes: when true, the channel stays muted at boot and the touch buttons / backend UI
+// cannot unmute it. kForceMicMuted stops audio streaming (STT); kForceSpeakerMuted silences TTS.
+// Combine kForceMicMuted with BackendComm::sendText() to drive the LLM from text only.
+inline const bool kForceMicMuted = false;
+inline const bool kForceSpeakerMuted = false;
+
 // 0 disables M5Unified's built-in filter; 64 is a conservative starting point for CoreS3's ES7210 mics.
 inline const uint8_t kMicNoiseFilterLevel = 128;
 
