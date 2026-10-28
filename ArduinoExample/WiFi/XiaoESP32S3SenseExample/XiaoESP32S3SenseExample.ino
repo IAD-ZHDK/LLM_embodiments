@@ -2,6 +2,7 @@
 // Based on the M5Stack example, without screen, touch, IMU, servo and speaker (speaker: TODO).
 #include "src/BackendComm.h"
 #include "esp_camera.h"
+#include "src/PresenceDetect.h"
 
 // ---- Camera (OV2640 on the XIAO ESP32-S3 Sense) ----
 static camera_config_t cameraConfig = {
@@ -33,6 +34,8 @@ static camera_config_t cameraConfig = {
 };
 
 static bool cameraReady = false;
+static bool soundOn = false;
+static String soundSequence;
 
 static void initializeCamera()
 {
@@ -133,8 +136,15 @@ static void handleTakePicture(const String &value)
     esp_camera_fb_return(frame);
 }
 
+static void handleSetSound(const String &value)
+{
+    soundSequence = value;
+    soundOn = true;
+}
+
 // ---- Tool table (declared in src/DeviceTools.h) ----
 DeviceTool deviceTools[] = {
+    {"set_sound", "Plays a tone or a sequence of tones. Value is comma-separated \"frequency:durationMs\" segments in Hz:milliseconds, e.g. \"880:200,:100,660:200\"; leave frequency blank for a silent pause.", "string", "write", handleSetSound, ""},
     {"set_led", "Turn the small yellow LED on the device on or off.", "bool", "write", handleSetLed, ""},
     {"get_String", "Read back the text that was previously stored on the device.", "none", "read", handleGetString, ""},
     {"set_String", "Store a short text on the device.", "string", "write", handleSetString, ""},
@@ -151,10 +161,19 @@ void setup()
     Serial.printf("[Camera] PSRAM: %s, size %u bytes\n", psramFound() ? "found" : "NOT found", (unsigned)ESP.getPsramSize());
     // Camera first: it needs a clean LEDC timer / GPIO state, before WiFi and the PDM mic start.
     initializeCamera();
+    if (cameraReady)
+        PresenceDetect::begin();
     BackendComm::begin();
 }
 
 void loop()
 {
     BackendComm::loop();
+    if (cameraReady)
+        PresenceDetect::loop();
+    if (soundOn)
+    {
+        soundOn = false;
+        BackendComm::playToneSequence(soundSequence);
+    }
 }

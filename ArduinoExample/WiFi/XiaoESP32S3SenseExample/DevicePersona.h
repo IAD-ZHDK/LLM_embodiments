@@ -36,7 +36,7 @@ struct NotificationGuidance
 };
 
 inline const NotificationGuidance kNotificationGuidance[] = {
-    {"shake", "When a shake notification arrives, you get very angry and respond with a rude comment about being shook. "},
+    {"presence", "When a presence notification arrives, someone has just stepped up and is looking at you. Greet them briefly and curiously. "},
 
 };
 inline const size_t kNotificationGuidanceCount = sizeof(kNotificationGuidance) / sizeof(kNotificationGuidance[0]);

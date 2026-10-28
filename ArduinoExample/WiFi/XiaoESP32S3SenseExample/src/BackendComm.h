@@ -14,13 +14,14 @@
 
 // Backend client for the XIAO ESP32-S3 Sense: streams the PDM microphone to the backend over a
 // WebSocket, forwards camera frames on request, and executes tool calls. There is no screen, so
-// status goes to the Serial monitor. There is no speaker yet: see the "TODO: speaker" markers.
+// status goes to the Serial monitor. Audio out uses the optional Adafruit Audio BFF (see kSpeakerEnabled).
 namespace BackendComm
 {
     constexpr uint32_t kSampleRate = 16000;
     constexpr size_t kAudioChunkSamples = 512;
 
-    inline I2SClass i2s;
+    inline I2SClass i2s; // PDM microphone
+    inline I2SClass spk; // Audio BFF amplifier output
     inline int16_t audioBuffer[kAudioChunkSamples];
 
     inline Preferences preferences;
@@ -46,26 +47,150 @@ namespace BackendComm
         webSocket.sendTXT("{\"audio\":\"finished\"}");
     }
 
-    // TODO: speaker. Once a speaker is attached, play the PCM here and only call this when playback
-    // has really finished. For now it is called right away so the backend and mic keep working.
+    // ---- Speaker (Adafruit Audio BFF, MAX98357 I2S amp) ----
+    // The I2S output is opened per utterance and closed afterwards. If it is disabled or can't be
+    // opened, all audio is skipped and the conversation continues without sound.
+    inline bool _speakerOpen = false;
+    inline bool _speakerFailed = false;
+    inline uint32_t playbackSampleRate = kSampleRate;
+
+    inline bool _openSpeaker(uint32_t sampleRate)
+    {
+        if (!kSpeakerEnabled || _speakerFailed)
+            return false;
+        if (_speakerOpen)
+            return true;
+        spk.setPins(XiaoPins::kSpkBclk, XiaoPins::kSpkLrc, XiaoPins::kSpkData);
+        _speakerOpen = spk.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+        if (!_speakerOpen)
+        {
+            _speakerFailed = true;
+            Serial.println("[Speaker] I2S output failed to start; continuing without audio out.");
+        }
+        return _speakerOpen;
+    }
+
+    inline void _closeSpeaker()
+    {
+        if (!_speakerOpen)
+            return;
+        // Flush the DMA buffers with silence so the end of the sentence isn't cut off.
+        static uint8_t silence[4096] = {0};
+        spk.write(silence, sizeof(silence));
+        spk.write(silence, sizeof(silence));
+        spk.end();
+        _speakerOpen = false;
+    }
+
+    // Writes pcm_s16le mono samples with the software volume applied.
+    inline void _writeSpeaker(const uint8_t *data, size_t length)
+    {
+        int16_t chunk[256];
+        const int16_t *src = reinterpret_cast<const int16_t *>(data);
+        size_t samples = length / 2;
+        const int volume = speakerMuted ? 0 : kSpeakerVolumePercent;
+        while (samples > 0)
+        {
+            size_t n = samples < 256 ? samples : 256;
+            for (size_t i = 0; i < n; i++)
+                chunk[i] = (int16_t)(((int32_t)src[i] * volume) / 100);
+            spk.write(reinterpret_cast<uint8_t *>(chunk), n * 2);
+            src += n;
+            samples -= n;
+        }
+    }
+
     inline void _finishDeviceSpeech()
     {
+        _closeSpeaker();
         deviceSpeaking = false;
         _sendAudioFinished();
     }
 
-    // TODO: speaker. Incoming TTS audio (pcm_s16le, mono, sampleRate from "audioStart") is dropped.
+    // Incoming TTS audio: pcm_s16le, mono, sampleRate from "audioStart".
     inline void _playDeviceAudio(uint8_t *payload, size_t length)
     {
-        (void)payload;
-        (void)length;
+        if (_speakerOpen)
+            _writeSpeaker(payload, length);
     }
 
-    // TODO: speaker. Tone helpers for notification sounds; no-ops until there is a speaker.
+    inline void _beginDeviceAudio(uint32_t sampleRate)
+    {
+        playbackSampleRate = sampleRate;
+        _closeSpeaker();
+        _openSpeaker(sampleRate);
+    }
+
+    // frequency == 0 plays silence, so sequences can include pauses. Sine tone with a short fade
+    // at both ends, played with continuous phase.
+    inline void _playToneSegment(uint32_t frequency, uint32_t durationMs)
+    {
+        const uint32_t total = kSampleRate / 1000 * durationMs;
+        int16_t chunk[256];
+        if (frequency == 0)
+        {
+            memset(chunk, 0, sizeof(chunk));
+            for (uint32_t done = 0; done < total; done += 256)
+                spk.write(reinterpret_cast<uint8_t *>(chunk), ((total - done) < 256 ? (total - done) : 256) * 2);
+            return;
+        }
+        frequency = constrain(frequency, 60UL, 4000UL);
+        Serial.printf("[Speaker] Tone %luHz for %lums.\n", (unsigned long)frequency, (unsigned long)durationMs);
+        const uint32_t fade = min<uint32_t>(kSampleRate / 200, total / 2);
+        uint32_t done = 0;
+        while (done < total)
+        {
+            size_t n = (total - done) < 256 ? (total - done) : 256;
+            for (size_t i = 0; i < n; i++)
+            {
+                uint32_t pos = done + i;
+                float gain = 1.0f;
+                if (pos < fade)
+                    gain = (float)pos / fade;
+                else if (total - pos <= fade)
+                    gain = (float)(total - pos) / fade;
+                float phase = 2.0f * PI * fmodf((float)frequency * pos / kSampleRate, 1.0f);
+                chunk[i] = (int16_t)(sinf(phase) * 24000.0f * gain);
+            }
+            _writeSpeaker(reinterpret_cast<uint8_t *>(chunk), n * 2);
+            done += n;
+        }
+    }
+
+    // Plays a comma-separated list of "frequency:durationMs" segments, e.g. "880:200,:100,660:200".
+    // Blank frequency (":100") is a pause; a segment without ":" is a frequency played for 500ms.
+    // Silently does nothing without a speaker.
+    inline void playToneSequence(const String &sequence)
+    {
+        if (deviceSpeaking || !_openSpeaker(kSampleRate))
+            return;
+        int start = 0;
+        while (start < (int)sequence.length())
+        {
+            int comma = sequence.indexOf(',', start);
+            String token = comma == -1 ? sequence.substring(start) : sequence.substring(start, comma);
+            token.trim();
+            if (token.length())
+            {
+                int colon = token.indexOf(':');
+                String freqPart = colon == -1 ? token : token.substring(0, colon);
+                String durPart = colon == -1 ? String("") : token.substring(colon + 1);
+                freqPart.trim();
+                durPart.trim();
+                uint32_t frequency = freqPart.length() ? (uint32_t)freqPart.toInt() : 0;
+                uint32_t durationMs = durPart.length() ? (uint32_t)durPart.toInt() : 500;
+                _playToneSegment(frequency, durationMs);
+            }
+            if (comma == -1)
+                break;
+            start = comma + 1;
+        }
+        _closeSpeaker();
+    }
+
     inline void playTone(uint32_t frequency, uint32_t durationMs)
     {
-        (void)frequency;
-        (void)durationMs;
+        playToneSequence(String(frequency) + ":" + String(durationMs));
     }
 
     inline void _startMic()
@@ -242,6 +367,7 @@ namespace BackendComm
         else if (doc["audioStart"].is<JsonObject>())
         {
             deviceSpeaking = true;
+            _beginDeviceAudio(doc["audioStart"]["sampleRate"] | kSampleRate);
         }
         else if (!doc["audioEnd"].isNull())
         {
@@ -262,6 +388,7 @@ namespace BackendComm
         case WStype_DISCONNECTED:
             serverConnected = false;
             deviceSpeaking = false;
+            _closeSpeaker();
             Serial.println("[WS] Disconnected");
             break;
         case WStype_ERROR:
