@@ -44,8 +44,8 @@ namespace BackendComm
     static Preferences preferences;
     static WebSocketsClient webSocket;
 
-    static bool micMuted = false;
-    static bool speakerMuted = false;
+    static bool micMuted = true;
+    static bool speakerMuted = true;
     static bool deviceSpeaking = false;
     static bool audioStreamEnded = false;
     static bool useAnalogMic = false;
@@ -788,8 +788,8 @@ namespace BackendComm
         _loadBootstrapConfig();
         PersonaEditor::load();
         displayState.wsTarget = "Target: " + backendHost + ":" + String(backendPort) + backendPath;
-        micMuted = kForceMicMuted;
-        speakerMuted = kForceSpeakerMuted;
+        micMuted = micMuted || kForceMicMuted;
+        speakerMuted = speakerMuted || kForceSpeakerMuted;
         displayState.micMuted = micMuted;
         displayState.speakerMuted = speakerMuted;
         _updateMicStatus();
