@@ -20,6 +20,10 @@ namespace BackendComm
 {
 
     // Audio streaming settings (must match RATE in backend/scriptRemoteSTT.py)
+    // Optional hook: called with true when the LLM starts thinking and false when it is done.
+    // Set it in setup(), e.g. BackendComm::onLlmState = [](bool thinking){ digitalWrite(LED_BUILTIN, thinking); };
+    static void (*onLlmState)(bool thinking) = nullptr;
+
     static const uint32_t kSampleRate = 16000;
     static const size_t kAudioChunkSamples = 512; // ~32ms per chunk at 16kHz
     static const size_t kDeviceAudioChunkSamples = 2048;
@@ -430,6 +434,8 @@ namespace BackendComm
         generation["top_k"] = p.topK;
         generation["max_tokens"] = p.maxTokens;
         generation["repeat_penalty"] = p.repeatPenalty;
+        if (kGenerationSettings.think && kGenerationSettings.think[0] != '\0')
+            generation["think"] = kGenerationSettings.think;
         doc["deviceInfo"]["speech"]["voice"] = p.voice;
         JsonArray notifications = doc["deviceInfo"]["notificationGuidance"].to<JsonArray>();
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
@@ -508,6 +514,11 @@ namespace BackendComm
         {
             JsonObjectConst toolCall = doc["toolCall"].as<JsonObjectConst>();
             _handleToolCall(toolCall["name"].as<String>(), toolCall["value"].as<String>());
+        }
+        else if (doc["llmState"].is<const char *>())
+        {
+            if (onLlmState)
+                onLlmState(strcmp(doc["llmState"].as<const char *>(), "thinking") == 0);
         }
         else if (doc["assistantResponse"].is<const char *>())
         {

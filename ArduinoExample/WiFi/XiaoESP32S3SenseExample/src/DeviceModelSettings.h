@@ -9,4 +9,6 @@ struct PersonaGenerationSettings
     int maxTokens;
     float repeatPenalty;
     int voice;
+    // Optional and LAST so older DevicePersona.h files (without it) still compile (nullptr = not set).
+    const char *think;
 };

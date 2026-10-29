@@ -24,6 +24,7 @@ inline const PersonaGenerationSettings kGenerationSettings = {
     1000, // Maximum reply length in tokens. Use 128-256 for brief speech, or 512+ for longer answers.
     1.1f, // Repeat penalty: discourages repeated words and phrases. Ollama only; 1.0 disables it, 1.1 is gentle.
     1,    // Voice: spoken voice 1-6 (1 US lessac, 2 GB alan, 3 US amy, 4 GB northern male, 5 US ryan, 6 GB jenny). Higher numbers use the last voice.
+    "",   // Think (optional): "" = use backend config.toml. Or "false", "true", "low", "medium", "high" for reasoning models.
 };
 
 // Instructions for notifications this device sends on its own. Add one entry for each

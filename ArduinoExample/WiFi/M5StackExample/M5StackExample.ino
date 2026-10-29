@@ -197,6 +197,12 @@ void setup()
 {
     BackendComm::begin();
 
+    // Optional: called with true while the LLM is thinking and false once it has answered.
+    // Replace LED_BUILTIN with the pin of your own LED (and call pinMode on it).
+    pinMode(LED_BUILTIN, OUTPUT);
+    BackendComm::onLlmState = [](bool thinking)
+    { digitalWrite(LED_BUILTIN, thinking); };
+
     mySerial.begin(115200, SERIAL_8N1, rxPin, txPin);
     mySerial.print("#0D1500\r");  // clears the servo serial buffer
     mySerial.print("#254LED3\r"); // set servo LED

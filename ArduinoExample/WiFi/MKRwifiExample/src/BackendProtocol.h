@@ -38,6 +38,8 @@ namespace BackendProtocol
         generation["top_k"] = kGenerationSettings.topK;
         generation["max_tokens"] = kGenerationSettings.maxTokens;
         generation["repeat_penalty"] = kGenerationSettings.repeatPenalty;
+        if (kGenerationSettings.think && kGenerationSettings.think[0] != '\0')
+            generation["think"] = kGenerationSettings.think;
         info["speech"]["voice"] = kGenerationSettings.voice;
         JsonArray notifications = info["notificationGuidance"].to<JsonArray>();
         for (size_t i = 0; i < kNotificationGuidanceCount; i++)
@@ -68,6 +70,10 @@ namespace BackendProtocol
         return payload;
     }
 
+    // Optional hook: called with true when the LLM starts thinking and false when it is done.
+    // Set it in setup(), e.g. BackendProtocol::onLlmState = [](bool thinking){ digitalWrite(LED_BUILTIN, thinking); };
+    inline void (*onLlmState)(bool thinking) = nullptr;
+
     // Handles one incoming text message. Only tool calls matter to a board without audio;
     // everything else (audio, config, display text) is ignored. Returns true if a tool ran.
     inline bool handleMessage(const uint8_t *payload, size_t length)
@@ -75,9 +81,16 @@ namespace BackendProtocol
         // Only keep toolCall so any other (possibly long) message is never copied into RAM.
         JsonDocument filter;
         filter["toolCall"] = true;
+        filter["llmState"] = true;
         JsonDocument doc;
         if (deserializeJson(doc, payload, length, DeserializationOption::Filter(filter)) != DeserializationError::Ok)
             return false;
+        if (doc["llmState"].is<const char *>())
+        {
+            if (onLlmState)
+                onLlmState(strcmp(doc["llmState"].as<const char *>(), "thinking") == 0);
+            return false;
+        }
         if (!doc["toolCall"].is<JsonObject>())
             return false;
 

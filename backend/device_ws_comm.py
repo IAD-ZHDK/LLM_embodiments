@@ -202,6 +202,9 @@ class DeviceWebSocketCommunication:
             wait=False,
         )
 
+    def send_llm_state(self, state: str) -> bool:
+        return self._send_json({"llmState": state}, wait=False)
+
     def send_audio_start(self, sample_rate: int) -> bool:
         return self._send_json({"audioStart": {"sampleRate": sample_rate, "format": "pcm_s16le", "channels": 1}}, wait=False)
 

@@ -696,13 +696,22 @@ async def _call_llm(session: DeviceSession, text: str, role: str, source: str) -
     tui.reset_thinking(session.session_id)
     tui.log_device(session.session_id, f"💬 {text}")
 
+    def _notify_state(state_name: str) -> None:
+        send_llm_state = getattr(session.comm, "send_llm_state", None)
+        if callable(send_llm_state):
+            send_llm_state(state_name)
+
     try:
         # Only this device's own turns are serialized; other devices run concurrently and are
         # queued by the model server itself (see Ollama's OLLAMA_NUM_PARALLEL).
         async with session.lock:
             print(f"🤖 LLM[{req_id}] [{session.session_id}] {source} started")
             started_at = time.perf_counter()
-            response = await asyncio.to_thread(session.llm_api.send, text, role)
+            _notify_state("thinking")
+            try:
+                response = await asyncio.to_thread(session.llm_api.send, text, role)
+            finally:
+                _notify_state("idle")
             elapsed_ms = (time.perf_counter() - started_at) * 1000
             if response is not None:
                 response["_processingMs"] = round(elapsed_ms)
@@ -1060,6 +1069,15 @@ def _apply_device_info(session: DeviceSession, device_info: Dict[str, Any]) -> N
                 if minimum <= value <= maximum:
                     settings[name] = value
                     applied.append(f"{name}={value}")
+
+            think = generation.get("think")
+            if isinstance(think, str):
+                think = think.strip().lower()
+                if think in ("true", "false"):
+                    think = think == "true"
+            if think is True or think is False or think in ("low", "medium", "high"):
+                settings["think"] = think
+                applied.append(f"think={str(think).lower()}")
 
             if applied:
                 print(f"🎛️  [{session.session_id}] Device generation settings installed: {', '.join(applied)}")

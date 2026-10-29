@@ -12,11 +12,20 @@ WiFi example for the Seeed Studio XIAO ESP32-S3 Sense, based on the M5Stack exam
 
 1. Arduino IDE with the **esp32 core 3.x** (needed for `ESP_I2S.h`). Board: **XIAO_ESP32S3**.
 2. Tools → **PSRAM: OPI PSRAM** (required for the camera).
-3. Install libraries: **ArduinoJson** (v7) and **WebSockets** (Markus Sattler).
-4. Copy `WifiSecrets.example.h` to `WifiSecrets.h` and enter your WiFi and backend address.
-5. Upload, open the Serial monitor, and start the backend (`./run.sh`).
+3. Tools → **Partition Scheme** → **8M with spiffs (3MB APP/1.5MB SPIFFS)**. This gives the example a 3 MB application partition and a 1.5 MB filesystem partition for the system prompt.
+4. Install libraries: **ArduinoJson** (v7) and **WebSockets** (Markus Sattler).
+5. Copy `WifiSecrets.example.h` to `WifiSecrets.h` and enter your WiFi and backend address.
+6. Upload, open the Serial monitor, and start the backend (`./run.sh`).
 
 The persona editor is served by the device on its IP address, as in the M5Stack example.
+
+## Persona editor storage
+
+The default system prompt is defined in `DevicePersona.h`. Saving a prompt in the device's web editor overrides that default and stores the edited prompt in flash as `/prompt.txt` on LittleFS. Other persona text fields and settings are stored in the ESP32's NVS settings area.
+
+The filesystem partition is important for larger prompts. Without one, the editor falls back to NVS, which has only about 20 KB shared by all saved settings; a prompt can fail to save even when it is only a few thousand bytes. The editor reports the submitted size and its per-field limit when a save fails, but available NVS capacity may be lower because the other settings share it. The 3 MB application allocation is the recommended starting point for compiling this example; if your installed core or libraries report that the sketch is too large, choose a partition scheme with a larger application allocation that still includes a filesystem.
+
+Changing the partition scheme or erasing the device's flash can erase saved persona values. Use **Reset persona to defaults** in the editor to remove saved values and return to the prompt in `DevicePersona.h`.
 
 ## Presence detection
 
