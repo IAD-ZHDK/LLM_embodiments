@@ -44,8 +44,8 @@ namespace BackendComm
     static Preferences preferences;
     static WebSocketsClient webSocket;
 
-    static bool micMuted = true;
-    static bool speakerMuted = true;
+    static bool micMuted = false;
+    static bool speakerMuted = false;
     static bool deviceSpeaking = false;
     static bool audioStreamEnded = false;
     static bool useAnalogMic = false;
