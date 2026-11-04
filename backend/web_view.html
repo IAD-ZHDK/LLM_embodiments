@@ -176,6 +176,13 @@ function renderNow(d) {
   return `STT: ${d.stt || "(listening...)"}\n\nPrompt: ${d.prompt || "(none yet)"}\n\nResponse: ${d.response || "(none yet)"}`;
 }
 
+function setAddress(refs, address) {
+  refs.addr.hidden = !address;
+  refs.addr.textContent = address || "";
+  if (address) refs.addr.href = "http://" + address + "/";
+  else refs.addr.removeAttribute("href");
+}
+
 function addDevice(id, d) {
   if (devices.has(id)) return;
   const refs = { data: d };
@@ -185,7 +192,10 @@ function addDevice(id, d) {
   focusBtn.addEventListener("click", () => setFocus(id));
   const closeBtn = el("button", { className: "icon-btn close-btn", textContent: "\u2715", title: "Back to overview (Esc)", ariaLabel: "Exit full screen" });
   closeBtn.addEventListener("click", clearFocus);
-  refs.head = el("div", { className: "device-head" }, refs.title, focusBtn, closeBtn);
+  refs.addr = el("a", { target: "_blank", rel: "noopener", title: "Open the device's persona page" });
+  refs.addr.style.color = "inherit";
+  setAddress(refs, d.address);
+  refs.head = el("div", { className: "device-head" }, refs.title, refs.addr, focusBtn, closeBtn);
   refs.focusBtn = focusBtn;
   refs.status = el("div");
   const mic = checkbox("Mute mic", d.mic_muted, (v) => send({ action: "mic", id, value: v }));
@@ -279,7 +289,7 @@ function setField(id, field, value) {
   refs.data[field] = value;
   const d = refs.data;
   switch (field) {
-    case "address": tryReattach(id); break;
+    case "address": setAddress(refs, value); tryReattach(id); break;
     case "name": refs.title.textContent = value || "Device " + id; break;
     case "tools": refs.tools.textContent = renderTools(value); break;
     case "stt": case "prompt": case "response": refs.now.textContent = renderNow(d); break;
