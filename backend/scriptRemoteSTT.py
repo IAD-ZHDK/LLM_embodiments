@@ -122,7 +122,7 @@ class WhisperSession:
     runs one worker per GPU (via device_index) can start multiple of these side by side."""
 
     def __init__(self, model_name: str, device: str, compute_type: str, device_index: int, language: str,
-                 silence_hangover: float = 0.6):
+                 silence_hangover: float = 0.7):
         resolved_device = device if device != "auto" else ("cuda" if _cuda_available() else "cpu")
         resolved_compute_type = compute_type
         if resolved_compute_type == "auto":

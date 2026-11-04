@@ -310,7 +310,7 @@ class WhisperRecognizer:
         compute_type="auto",
         language="auto",
         device_index=0,
-        silence_hangover=0.6,
+        silence_hangover=0.7,
     ):
         self.callback = callback or self.default_callback
         self.audio_source = audio_source

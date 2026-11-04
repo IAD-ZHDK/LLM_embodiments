@@ -47,7 +47,7 @@ enabled = true
 # and (in a future version) multiple simultaneous transcription sessions. No streaming partials; it
 # transcribes each utterance after a short pause using the same voice-activity detection as "vosk".
 sttBackend = "whisper"  # "vosk" | "whisper"
-speechToTextModel = "tiny.en"  # Whisper model name (sttBackend = "whisper"); use a Vosk model folder for sttBackend = "vosk"
+speechToTextModel = "small.en"  # Whisper model name (sttBackend = "whisper"); use a Vosk model folder for sttBackend = "vosk"
 textToSpeechModel = "en_GB-northern_english_male-medium.onnx"
 
 # Only used when sttBackend = "whisper". Ignored otherwise.
