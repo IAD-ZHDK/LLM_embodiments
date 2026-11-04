@@ -6,6 +6,10 @@
 <title>LLM Embodiments Viewer</title>
 <style>
   * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: #fff transparent; }
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #fff; border-radius: 2px; }
   html, body { margin: 0; height: 100%; background: #000; color: #fff;
     font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
   #layout { display: grid; grid-template-columns: minmax(280px, 1fr) 2fr; gap: 8px; padding: 8px; height: 100%; }
@@ -93,6 +97,23 @@ const $ = (id) => document.getElementById(id);
 const MAX_LINES = 2000;
 const devices = new Map();
 let ws;
+
+// Keep every scrollable area pinned to the bottom while content grows, unless the user scrolled up.
+const pinned = new WeakMap();
+const isPinned = (n) => pinned.get(n) !== false;
+document.addEventListener("scroll", (e) => {
+  const n = e.target;
+  if (n instanceof Element) pinned.set(n, n.scrollTop + n.clientHeight >= n.scrollHeight - 8);
+}, true);
+new MutationObserver((muts) => {
+  const targets = new Set();
+  for (const m of muts) {
+    for (let n = m.target.nodeType === 1 ? m.target : m.target.parentElement; n; n = n.parentElement) {
+      if (n.scrollHeight > n.clientHeight && getComputedStyle(n).overflowY !== "visible") targets.add(n);
+    }
+  }
+  for (const n of targets) if (isPinned(n)) n.scrollTop = n.scrollHeight;
+}).observe(document.body, { childList: true, characterData: true, subtree: true });
 
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
